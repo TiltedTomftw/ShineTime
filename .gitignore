@@ -35,6 +35,14 @@ yarn-error.*
 .env
 server/.env
 
+# local databases and logs
+*.db
+*.db-shm
+*.db-wal
+server/*.json
+server/cloudflared*.log
+server/public/uploads/
+
 # typescript
 *.tsbuildinfo
 
