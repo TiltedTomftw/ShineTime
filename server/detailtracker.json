@@ -1,0 +1,52 @@
+{
+  "jobs": [
+    {
+      "jobId": "job_1763310131046_i54c3p2n7",
+      "deviceId": "device_1763281081037_qgbjq8heu",
+      "detailerName": "Beffrey Jezos",
+      "detailers": [
+        "Beffrey Jezos"
+      ],
+      "detailerTimeTracking": {
+        "Beffrey Jezos": 158491
+      },
+      "currentDetailerStartTime": 1763310131046,
+      "stockNumber": "C123456",
+      "make": "Toyota",
+      "model": "Camry",
+      "year": "2006",
+      "color": "Gold",
+      "startTime": 1763310131046,
+      "endTime": 1763310289537,
+      "totalPauseTime": 0,
+      "totalActiveTime": 158491,
+      "status": "completed",
+      "pauseEvents": [],
+      "createdAt": 1763310131046,
+      "updatedAt": 1763310289554
+    },
+    {
+      "jobId": "job_1763310058340_5mfkn2oka",
+      "deviceId": "device_1763281081037_qgbjq8heu",
+      "detailerName": "Beffrey Jezos",
+      "detailers": [
+        "Beffrey Jezos"
+      ],
+      "detailerTimeTracking": {},
+      "currentDetailerStartTime": 1763310058340,
+      "stockNumber": "C12345",
+      "make": "Honda",
+      "model": "Civic",
+      "year": "1999",
+      "color": "Red",
+      "startTime": 1763310058340,
+      "endTime": null,
+      "totalPauseTime": 0,
+      "totalActiveTime": null,
+      "status": "in_progress",
+      "pauseEvents": [],
+      "createdAt": 1763310058340,
+      "updatedAt": 1763310058685
+    }
+  ]
+}
