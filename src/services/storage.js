@@ -94,22 +94,7 @@ export const saveLocalJobs = async (jobs) => {
   }
 };
 
-// Check for existing active job by stock number
-export const findActiveJobByStockNumber = async (stockNumber) => {
-  try {
-    const response = await axios.get(config.JOBS, { timeout: 5000 });
-    const allJobs = response.data;
-    return allJobs.find(job =>
-      job.stockNumber === stockNumber &&
-      (job.status === 'paused' || job.status === 'in_progress')
-    );
-  } catch (error) {
-    console.log('Could not check server for active jobs:', error.message);
-    return null;
-  }
-};
-
-// Create new job (or resume existing paused job)
+// Create new job
 export const createJob = async (vehicleData) => {
   const deviceId = await getDeviceId();
   const detailerName = await getDetailerName();
@@ -123,110 +108,37 @@ export const createJob = async (vehicleData) => {
     year: sanitizeInput(vehicleData.year),
     color: sanitizeInput(vehicleData.color),
   };
-  
-  // Check if there's an active job with this stock number
-  const existingJob = await findActiveJobByStockNumber(sanitizedVehicleData.stockNumber);
-  
-  if (existingJob && existingJob.status === 'paused') {
-    // Resume existing job with new detailer
-    const resumeEvent = {
-      type: 'resume',
-      timestamp: now,
-      detailerName: detailerName,
-      detailerChange: true
-    };
-    
-    // Add new detailer to detailers array if not already there
-    const detailers = existingJob.detailers || [existingJob.detailerName];
-    if (!detailers.includes(detailerName)) {
-      detailers.push(detailerName);
-    }
-    
-    // Initialize detailer time tracking if not present
-    if (!existingJob.detailerTimeTracking) {
-      existingJob.detailerTimeTracking = {};
-    }
-    
-    // Calculate pause duration
-    const lastPauseEvent = existingJob.pauseEvents[existingJob.pauseEvents.length - 1];
-    const pauseDuration = now - lastPauseEvent.timestamp;
-    existingJob.totalPauseTime += pauseDuration;
-    
-    // Update job
-    existingJob.pauseEvents.push(resumeEvent);
-    existingJob.status = 'in_progress';
-    existingJob.currentDetailerStartTime = now; // Track when current detailer started
-    existingJob.detailerName = detailerName; // Current detailer
-    existingJob.detailers = detailers; // All detailers who worked on it
-    existingJob.deviceId = deviceId; // Current device
-    addCustodyEvent(existingJob, 'resume', detailerName, '');
-    
-    // Save locally and sync
-    const jobs = await getLocalJobs();
-    const localIndex = jobs.findIndex(j => j.jobId === existingJob.jobId);
-    if (localIndex >= 0) {
-      jobs[localIndex] = existingJob;
-    } else {
-      jobs.push(existingJob);
-    }
-    await saveLocalJobs(jobs);
-    await syncJobToServer(existingJob);
-    
-    return existingJob;
-  } else if (existingJob && existingJob.status === 'in_progress') {
-    throw new Error('A job with this stock number is already in progress.');
-  } else {
-    // Create new job
-    const job = {
-      jobId: `job_${now}_${Math.random().toString(36).substr(2, 9)}`,
-      deviceId,
-      detailerName,
-      detailers: [detailerName], // Track all detailers
-      detailerTimeTracking: {}, // Track time per detailer
-      currentDetailerStartTime: now, // When current detailer started working
-      ...sanitizedVehicleData,
-      startTime: now,
-      endTime: null,
-      totalPauseTime: 0,
-      totalActiveTime: null,
-      status: 'in_progress',
-      pauseEvents: [],
-      notes: [],
-      photos: [],
-      custodyEvents: [],
-      latestNote: '',
-      createdAt: now,
-    };
 
-    addCustodyEvent(job, 'start', detailerName, '');
+  const jobId = `job_${now}_${Math.random().toString(36).slice(2, 9)}`;
+  const detailers = detailerName ? [detailerName] : [];
 
-    const jobs = await getLocalJobs();
-    jobs.push(job);
-    await saveLocalJobs(jobs);
-    
-    // Try to sync immediately
-    await syncJobToServer(job);
-    
-    return job;
-  }
-};
+  const newJob = {
+    jobId,
+    deviceId,
+    detailerName: detailerName || 'Unknown',
+    detailers,
+    startTime: now,
+    currentDetailerStartTime: now,
+    totalPauseTime: 0,
+    totalActiveTime: 0,
+    status: 'in_progress',
+    pauseEvents: [],
+    notes: [],
+    latestNote: '',
+    custodyEvents: [],
+    detailerTimeTracking: {},
+    createdAt: now,
+    updatedAt: now,
+    ...sanitizedVehicleData,
+  };
 
-// Update job
-export const updateJob = async (jobId, updates) => {
+  addCustodyEvent(newJob, 'start', detailerName, '');
+
   const jobs = await getLocalJobs();
-  const index = jobs.findIndex(j => j.jobId === jobId);
-  
-  if (index !== -1) {
-    jobs[index] = { ...jobs[index], ...updates };
-    await saveLocalJobs(jobs);
-    
-    // Try to sync updated job
-    await syncJobToServer(jobs[index]);
-    
-    return jobs[index];
-  }
-  
-  return null;
+  jobs.unshift(newJob);
+  await saveLocalJobs(jobs);
+  await syncJobToServer(newJob);
+  return newJob;
 };
 
 // Get active jobs - syncs from server first
@@ -252,7 +164,7 @@ export const getCompletedJobs = async (filterDate = null) => {
 };
 
 // Pause job
-export const pauseJob = async (jobId) => {
+export const pauseJob = async (jobId, noteText = '') => {
   const pauseTime = Date.now();
   const jobs = await getLocalJobs();
   const job = jobs.find(j => j.jobId === jobId);
@@ -270,7 +182,19 @@ export const pauseJob = async (jobId) => {
       detailerName: job.detailerName 
     });
     job.status = 'paused';
-    addCustodyEvent(job, 'pause', job.detailerName, job.latestNote);
+    const detailerName = await getDetailerName();
+    const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
+    if (sanitizedNote) {
+      const notes = ensureArray(job.notes);
+      notes.unshift({
+        timestamp: Date.now(),
+        detailerName: detailerName || 'Unknown',
+        text: sanitizedNote,
+      });
+      job.notes = notes;
+      job.latestNote = sanitizedNote;
+    }
+    addCustodyEvent(job, 'pause', detailerName, sanitizedNote);
     await saveLocalJobs(jobs);
     await syncJobToServer(job);
     return job;
@@ -474,20 +398,17 @@ export const getJobById = async (jobId) => {
 };
 
 // Get today's stats - syncs from server first
-export const getTodayStats = async () => {
+export const getOverallStats = async () => {
   const jobs = await syncJobsFromServer();
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  const todayJobs = jobs.filter(j => j.createdAt >= today.getTime());
-  const completed = todayJobs.filter(j => j.status === 'completed');
-  const inProgress = todayJobs.filter(j => j.status === 'in_progress' || j.status === 'paused');
-  
+
+  const completed = jobs.filter(j => j.status === 'completed');
+  const inProgress = jobs.filter(j => j.status === 'in_progress' || j.status === 'paused');
+
   const totalTime = completed.reduce((sum, j) => sum + (j.totalActiveTime || 0), 0);
   const avgTime = completed.length > 0 ? totalTime / completed.length : 0;
-  
+
   return {
-    total: todayJobs.length,
+    total: jobs.length,
     completed: completed.length,
     inProgress: inProgress.length,
     avgTime,

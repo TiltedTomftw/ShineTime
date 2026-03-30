@@ -3,6 +3,7 @@ const cors = require('cors');
 const Database = require('better-sqlite3');
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const app = express();
@@ -22,10 +23,15 @@ const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');
 
 const uploadsDir = path.join(__dirname, 'public', 'uploads');
+const thumbsDir = path.join(uploadsDir, 'thumbs');
 const maxStorageBytes = parseInt(process.env.MAX_STORAGE_BYTES || '', 10) || 1024 * 1024 * 1024;
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+if (!fs.existsSync(thumbsDir)) {
+  fs.mkdirSync(thumbsDir, { recursive: true });
 }
 
 db.exec(`
@@ -111,6 +117,47 @@ function sanitizeInput(input) {
     .replace(/javascript:/gi, '')
     .trim()
     .slice(0, 200);
+}
+
+function sanitizeJobPayload(job) {
+  const sanitized = { ...job };
+
+  if (sanitized.stockNumber) sanitized.stockNumber = sanitizeInput(sanitized.stockNumber);
+  if (sanitized.make) sanitized.make = sanitizeInput(sanitized.make);
+  if (sanitized.model) sanitized.model = sanitizeInput(sanitized.model);
+  if (sanitized.year) sanitized.year = sanitizeInput(sanitized.year);
+  if (sanitized.color) sanitized.color = sanitizeInput(sanitized.color);
+  if (sanitized.detailerName) sanitized.detailerName = sanitizeInput(sanitized.detailerName);
+  if (sanitized.detailType) sanitized.detailType = sanitizeInput(sanitized.detailType);
+  if (sanitized.latestNote) sanitized.latestNote = sanitizeInput(sanitized.latestNote);
+  if (sanitized.detailers) sanitized.detailers = sanitized.detailers.map(d => sanitizeInput(d));
+
+  if (Array.isArray(sanitized.notes)) {
+    sanitized.notes = sanitized.notes.map(note => ({
+      ...note,
+      detailerName: sanitizeInput(note.detailerName || ''),
+      text: sanitizeInput(note.text || ''),
+    }));
+  }
+
+  if (Array.isArray(sanitized.custodyEvents)) {
+    sanitized.custodyEvents = sanitized.custodyEvents.map(event => ({
+      ...event,
+      detailerName: sanitizeInput(event.detailerName || ''),
+      note: sanitizeInput(event.note || ''),
+      type: sanitizeInput(event.type || ''),
+    }));
+  }
+
+  if (Array.isArray(sanitized.photos)) {
+    sanitized.photos = sanitized.photos.map(photo => ({
+      ...photo,
+      detailerName: sanitizeInput(photo.detailerName || ''),
+      note: sanitizeInput(photo.note || ''),
+    }));
+  }
+
+  return sanitized;
 }
 
 function extractJsonFromText(text) {
@@ -228,38 +275,14 @@ function saveJob(job) {
 // Create or update job
 app.post('/api/jobs', (req, res) => {
   try {
-    const job = req.body || {};
+    let job = req.body || {};
     const now = Date.now();
 
     if (!job.jobId) {
       return res.status(400).json({ error: 'jobId is required' });
     }
     
-    // Sanitize all string fields
-    if (job.stockNumber) job.stockNumber = sanitizeInput(job.stockNumber);
-    if (job.make) job.make = sanitizeInput(job.make);
-    if (job.model) job.model = sanitizeInput(job.model);
-    if (job.year) job.year = sanitizeInput(job.year);
-    if (job.color) job.color = sanitizeInput(job.color);
-    if (job.detailerName) job.detailerName = sanitizeInput(job.detailerName);
-    if (job.detailers) job.detailers = job.detailers.map(d => sanitizeInput(d));
-
-    if (job.stockNumber) {
-      const activeRows = db.prepare(
-        "SELECT data FROM jobs WHERE status IN ('in_progress', 'paused')"
-      ).all();
-      const conflict = activeRows
-        .map(r => JSON.parse(r.data))
-        .find(j => j.stockNumber === job.stockNumber && j.jobId !== job.jobId);
-
-      if (conflict) {
-        return res.status(409).json({
-          error: 'Duplicate stock number: active job exists',
-          existingJobId: conflict.jobId,
-          status: conflict.status,
-        });
-      }
-    }
+    job = sanitizeJobPayload(job);
 
     const existingRow = db.prepare('SELECT createdAt FROM jobs WHERE jobId = ?').get(job.jobId);
     const createdAt = job.createdAt || (existingRow ? existingRow.createdAt : now);
@@ -388,7 +411,7 @@ app.post('/api/ocr/vehicle', async (req, res) => {
 });
 
 // Add a photo to a job (stored on server)
-app.post('/api/jobs/:jobId/photos', (req, res) => {
+app.post('/api/jobs/:jobId/photos', async (req, res) => {
   try {
     const { jobId } = req.params;
     const { imageBase64, mimeType, dataUrl, note } = req.body || {};
@@ -425,13 +448,31 @@ app.post('/api/jobs/:jobId/photos', (req, res) => {
     const filePath = path.join(uploadsDir, fileName);
     const fileUrl = `/uploads/${fileName}`;
 
-    fs.writeFileSync(filePath, Buffer.from(image.base64, 'base64'));
+    const imageBuffer = Buffer.from(image.base64, 'base64');
+    fs.writeFileSync(filePath, imageBuffer);
+
+    let thumbUrl = '';
+    try {
+      const thumbName = fileName.replace(/\.[^.]+$/, '_thumb.jpg');
+      const thumbPath = path.join(thumbsDir, thumbName);
+      thumbUrl = `/uploads/thumbs/${thumbName}`;
+
+      await sharp(imageBuffer)
+        .rotate()
+        .resize({ width: 480, withoutEnlargement: true })
+        .jpeg({ quality: 85 })
+        .toFile(thumbPath);
+    } catch (thumbError) {
+      console.log('Thumbnail creation failed:', thumbError.message);
+      thumbUrl = '';
+    }
 
     const photos = Array.isArray(job.photos) ? job.photos : [];
     const detailerName = sanitizeInput(job.detailerName || 'Unknown');
     const photoNote = sanitizeInput(note || '').slice(0, 500);
     const photo = {
       url: fileUrl,
+      thumbUrl,
       timestamp: Date.now(),
       detailerName,
       note: photoNote,
@@ -477,7 +518,8 @@ app.post('/api/jobs/sync', (req, res) => {
     const getCreatedAt = db.prepare('SELECT createdAt FROM jobs WHERE jobId = ?');
 
     const syncJobs = db.transaction((items) => {
-      for (const job of items) {
+      for (const rawJob of items) {
+        const job = sanitizeJobPayload(rawJob || {});
         if (!job || !job.jobId) continue;
         const existing = getCreatedAt.get(job.jobId);
         const createdAt = job.createdAt || (existing ? existing.createdAt : now);

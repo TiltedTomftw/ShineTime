@@ -1,16 +1,18 @@
 $ErrorActionPreference = 'Stop'
 
 $logPath = Join-Path $PSScriptRoot 'cloudflared.log'
+
+$procs = Get-Process -Name cloudflared -ErrorAction SilentlyContinue
+if ($procs) {
+  $procs | Stop-Process -Force
+  Start-Sleep -Milliseconds 300
+}
+
 if (Test-Path $logPath) {
   try {
     Remove-Item $logPath -Force
   } catch {
     try {
-      $procs = Get-Process -Name cloudflared -ErrorAction SilentlyContinue
-      if ($procs) {
-        $procs | Stop-Process -Force
-        Start-Sleep -Milliseconds 300
-      }
       Remove-Item $logPath -Force
     } catch {
       $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'

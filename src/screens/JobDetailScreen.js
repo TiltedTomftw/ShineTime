@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, Image, Platform, FlatList, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { getJobById, pauseJob, resumeJob, completeJob, addJobNote, addJobPhoto } from '../services/storage';
 import config from '../config/api';
@@ -12,6 +12,12 @@ export default function JobDetailScreen({ route, navigation }) {
   const [showCompleteModal, setShowCompleteModal] = React.useState(false);
   const [noteText, setNoteText] = React.useState('');
   const [photoLoading, setPhotoLoading] = React.useState(false);
+  const [showPauseNoteModal, setShowPauseNoteModal] = React.useState(false);
+  const [pauseNoteText, setPauseNoteText] = React.useState('');
+  const [showPhotoModal, setShowPhotoModal] = React.useState(false);
+  const [activePhotoIndex, setActivePhotoIndex] = React.useState(0);
+
+  const photoUrls = (job?.photos || []).map(photo => `${config.ASSET_BASE_URL}${photo.url}`);
 
   const loadJob = async () => {
     const jobData = await getJobById(jobId);
@@ -25,10 +31,35 @@ export default function JobDetailScreen({ route, navigation }) {
   );
 
   const handlePause = async () => {
+    if (Platform.OS === 'ios') {
+      Alert.prompt(
+        'Pause Job',
+        'Add a note (optional)',
+        async (text) => {
+          setLoading(true);
+          try {
+            await pauseJob(jobId, text || '');
+            await loadJob();
+            Alert.alert('Success', 'Job paused');
+          } catch (error) {
+            Alert.alert('Error', error.message);
+          }
+          setLoading(false);
+        },
+        'plain-text'
+      );
+    } else {
+      setPauseNoteText('');
+      setShowPauseNoteModal(true);
+    }
+  };
+
+  const handlePauseWithNote = async () => {
     setLoading(true);
     try {
-      await pauseJob(jobId);
+      await pauseJob(jobId, pauseNoteText || '');
       await loadJob();
+      setShowPauseNoteModal(false);
       Alert.alert('Success', 'Job paused');
     } catch (error) {
       Alert.alert('Error', error.message);
@@ -123,6 +154,11 @@ export default function JobDetailScreen({ route, navigation }) {
     setPhotoLoading(false);
   };
 
+  const handleOpenPhoto = (photoUrl, index) => {
+    setActivePhotoIndex(index);
+    setShowPhotoModal(true);
+  };
+
   if (!job) {
     return (
       <View style={styles.loadingContainer}>
@@ -131,7 +167,14 @@ export default function JobDetailScreen({ route, navigation }) {
     );
   }
 
-  const elapsedTime = Date.now() - job.startTime - job.totalPauseTime;
+  const now = Date.now();
+  const lastPause = job.pauseEvents && job.pauseEvents.length > 0
+    ? job.pauseEvents[job.pauseEvents.length - 1]
+    : null;
+  const currentPauseDuration = job.status === 'paused' && lastPause && lastPause.type === 'pause'
+    ? now - lastPause.timestamp
+    : 0;
+  const elapsedTime = now - job.startTime - job.totalPauseTime - currentPauseDuration;
   const isPaused = job.status === 'paused';
   const isCompleted = job.status === 'completed';
 
@@ -265,13 +308,20 @@ export default function JobDetailScreen({ route, navigation }) {
         )}
         {job.photos && job.photos.length > 0 ? (
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow}>
-            {job.photos.map((photo, index) => (
-              <Image
-                key={`${photo.timestamp}-${index}`}
-                source={{ uri: `${config.ASSET_BASE_URL}${photo.url}` }}
-                style={styles.photoThumb}
-              />
-            ))}
+            {job.photos.map((photo, index) => {
+              const thumbUrl = photo.thumbUrl || photo.url;
+              return (
+                <TouchableOpacity
+                  key={`${photo.timestamp}-${index}`}
+                  onPress={() => handleOpenPhoto(`${config.ASSET_BASE_URL}${photo.url}`, index)}
+                >
+                  <Image
+                    source={{ uri: `${config.ASSET_BASE_URL}${thumbUrl}` }}
+                    style={styles.photoThumb}
+                  />
+                </TouchableOpacity>
+              );
+            })}
           </ScrollView>
         ) : (
           <Text style={styles.emptyText}>No photos yet.</Text>
@@ -332,6 +382,89 @@ export default function JobDetailScreen({ route, navigation }) {
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showPauseNoteModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowPauseNoteModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Pause Job</Text>
+            <Text style={styles.modalText}>Add a note (optional)</Text>
+            <TextInput
+              style={styles.noteInput}
+              value={pauseNoteText}
+              onChangeText={setPauseNoteText}
+              placeholder="Pause note"
+              multiline
+              maxLength={500}
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalButtonCancel}
+                onPress={() => setShowPauseNoteModal(false)}
+                disabled={loading}
+              >
+                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalButtonConfirm}
+                onPress={handlePauseWithNote}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.modalButtonTextConfirm}>Pause</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={showPhotoModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowPhotoModal(false)}
+      >
+        <View style={styles.photoModalOverlay}>
+          <TouchableOpacity
+            style={styles.photoModalClose}
+            onPress={() => setShowPhotoModal(false)}
+          >
+            <Text style={styles.photoModalCloseText}>×</Text>
+          </TouchableOpacity>
+          <FlatList
+            data={photoUrls}
+            horizontal
+            pagingEnabled
+            initialScrollIndex={activePhotoIndex}
+            showsHorizontalScrollIndicator={false}
+            style={styles.photoModalList}
+            decelerationRate="fast"
+            getItemLayout={(_, index) => ({
+              length: Dimensions.get('window').width,
+              offset: Dimensions.get('window').width * index,
+              index,
+            })}
+            keyExtractor={(item, index) => `${item}-${index}`}
+            onMomentumScrollEnd={(event) => {
+              const width = Dimensions.get('window').width;
+              const index = Math.round(event.nativeEvent.contentOffset.x / width);
+              setActivePhotoIndex(index);
+            }}
+            renderItem={({ item }) => (
+              <View style={styles.photoModalPage}>
+                <Image source={{ uri: item }} style={styles.photoModalImage} resizeMode="contain" />
+              </View>
+            )}
+          />
         </View>
       </Modal>
     </ScrollView>
@@ -593,6 +726,44 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginRight: 10,
     backgroundColor: '#e5e7eb',
+  },
+  photoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoModalImage: {
+    width: '100%',
+    height: '100%',
+  },
+  photoModalList: {
+    width: '100%',
+    height: '100%',
+  },
+  photoModalPage: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoModalClose: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 2,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  photoModalCloseText: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: 'bold',
+    lineHeight: 24,
   },
   modalOverlay: {
     flex: 1,

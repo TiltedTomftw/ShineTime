@@ -34,13 +34,17 @@ This installs:
 - `better-sqlite3` - Database
 - `cors` - Allow mobile apps to connect
 - `dotenv` - Load API keys from .env
+- `sharp` - Image thumbnail generation
 
 ### Step 3: Start the Server
 
 Create a file named `.env` in the `server` folder with:
 ```
 GEMINI_API_KEY=your_key_here
+MAX_STORAGE_BYTES=1073741824
 ```
+
+`MAX_STORAGE_BYTES` is optional and controls total storage (database + uploads).
 
 ```bash
 npm start
@@ -113,6 +117,13 @@ You can use these free tools to view the SQLite database:
 
 ---
 
+## Photos & Storage
+
+- Photo uploads are stored under `server/public/uploads`.
+- Thumbnails are generated at `server/public/uploads/thumbs`.
+- The dashboard and app use thumbnails for previews and the full image for viewing.
+- Storage limits are enforced using `MAX_STORAGE_BYTES`.
+
 ## API Endpoints
 
 The mobile app uses these endpoints:
@@ -124,6 +135,8 @@ The mobile app uses these endpoints:
 | POST | `/api/jobs` | Create or update a job |
 | POST | `/api/jobs/sync` | Sync multiple jobs at once |
 | GET | `/api/stats` | Get statistics (completed, in progress, etc.) |
+| DELETE | `/api/jobs` | Clear all jobs (testing only) |
+| DELETE | `/api/jobs/:jobId` | Delete a single job |
 
 ---
 

@@ -3,6 +3,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import HomeScreen from '../screens/HomeScreen';
 import NewJobScreen from '../screens/NewJobScreen';
+import InProgressScreen from '../screens/InProgressScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import JobDetailScreen from '../screens/JobDetailScreen';
 
@@ -32,6 +33,11 @@ export default function AppNavigator() {
           name="NewJob" 
           component={NewJobScreen}
           options={{ title: 'New Job' }}
+        />
+        <Stack.Screen 
+          name="InProgress" 
+          component={InProgressScreen}
+          options={{ title: 'In Progress' }}
         />
         <Stack.Screen 
           name="History" 

@@ -1,6 +1,6 @@
 // API Configuration
 // Set the server base URL here (IP:port or tunnel URL)
-const SERVER_BASE_URL = 'https://promoted-kidney-fathers-leu.trycloudflare.com';
+const SERVER_BASE_URL = 'https://roster-removable-albert-telecom.trycloudflare.com';
 const ASSET_BASE_URL = SERVER_BASE_URL;
 const API_BASE_URL = `${SERVER_BASE_URL}/api`;
 

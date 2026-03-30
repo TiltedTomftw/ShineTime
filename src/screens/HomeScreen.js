@@ -1,6 +1,6 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { getTodayStats, getActiveJobs } from '../services/storage';
+import { getOverallStats, getActiveJobs } from '../services/storage';
 import { useFocusEffect } from '@react-navigation/native';
 
 export default function HomeScreen({ navigation }) {
@@ -12,8 +12,8 @@ export default function HomeScreen({ navigation }) {
   const [activeJobs, setActiveJobs] = React.useState([]);
 
   const loadData = async () => {
-    const todayStats = await getTodayStats();
-    setStats(todayStats);
+    const overallStats = await getOverallStats();
+    setStats(overallStats);
     const jobs = await getActiveJobs();
     setActiveJobs(jobs);
   };
@@ -28,7 +28,7 @@ export default function HomeScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Shinetime</Text>
-        <Text style={styles.subtitle}>Today's Progress</Text>
+        <Text style={styles.subtitle}>Detailer Dashboard</Text>
       </View>
 
       <View style={styles.stats}>
@@ -36,10 +36,13 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.statValue}>{stats.completed}</Text>
           <Text style={styles.statLabel}>Completed</Text>
         </View>
-        <View style={styles.statCard}>
+        <TouchableOpacity
+          style={styles.statCard}
+          onPress={() => navigation.navigate('InProgress')}
+        >
           <Text style={styles.statValue}>{stats.inProgress}</Text>
           <Text style={styles.statLabel}>In Progress</Text>
-        </View>
+        </TouchableOpacity>
         <View style={styles.statCard}>
           <Text style={styles.statValue}>{Math.round(stats.avgTime / 60000) || '--'}</Text>
           <Text style={styles.statLabel}>Avg Time (min)</Text>

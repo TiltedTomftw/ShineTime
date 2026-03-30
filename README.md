@@ -74,9 +74,9 @@ Your PC IP addresses:
 ### 3. Configure Mobile App
 
 1. Open `src/config/api.js` in the mobile app
-2. Update `API_BASE_URL` with your PC's IP:
+2. Update `SERVER_BASE_URL` with your PC's IP:
    ```javascript
-   const API_BASE_URL = 'http://192.168.1.100:3000/api';
+  const SERVER_BASE_URL = 'http://192.168.1.100:3000';
    ```
 3. Save and reload the app
 
@@ -102,14 +102,16 @@ On the manager's PC, open a browser to:
 1. Open web browser to server address
 2. View real-time job status
 3. See completed jobs and statistics
-4. Dashboard auto-refreshes every 10 seconds
+4. Dashboard auto-refreshes every 12 seconds
 
 ## Features
 
 - ✅ Start/Pause/Resume/Complete jobs
 - ✅ Track active time (excludes pauses)
 - ✅ Works offline (syncs when online)
-- ✅ Manager dashboard with real-time stats
+- ✅ Manager dashboard with notes, photos, and custody timelines
+- ✅ OCR keytag scanning
+- ✅ Photo uploads with storage limits + thumbnail previews
 - ✅ Job history and reporting
 - ✅ No login required
 - ✅ Simple local network setup
@@ -117,9 +119,7 @@ On the manager's PC, open a browser to:
 ## Upcoming Features
 
 - 📷 Barcode scanner for VIN/Stock numbers
-- ⏱️ Live timer display on active jobs
 - 📊 Daily/weekly reports
-- 👤 Detailer name assignment
 - 🔔 Notifications for long-running jobs
 
 ## Development
@@ -164,7 +164,7 @@ npm run dev         # Development (auto-restart)
 ## Tech Stack
 
 - **Mobile**: React Native, Expo, AsyncStorage, React Navigation, Axios
-- **Server**: Node.js, Express, SQLite (better-sqlite3), CORS
+- **Server**: Node.js, Express, SQLite (better-sqlite3), CORS, Sharp (thumbnails)
 - **Dashboard**: HTML, CSS, Vanilla JavaScript
 
 ## Requirements

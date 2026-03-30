@@ -59,9 +59,9 @@ export default function HistoryScreen({ navigation }) {
                 {item.detailerName || 'Unknown detailer'}
               </Text>
               <Text style={styles.jobDetail}>
-                {item.status === 'completed' 
+                {item.status === 'completed'
                   ? `Completed: ${formatTime(item.totalActiveTime)}`
-                  : `In progress: ${formatTime(Date.now() - item.startTime - item.totalPauseTime)}`
+                  : `In progress: ${formatTime(getElapsedTime(item))}`
                 }
               </Text>
             </TouchableOpacity>
@@ -70,6 +70,17 @@ export default function HistoryScreen({ navigation }) {
       )}
     </View>
   );
+}
+
+function getElapsedTime(job) {
+  const now = Date.now();
+  const lastPause = job.pauseEvents && job.pauseEvents.length > 0
+    ? job.pauseEvents[job.pauseEvents.length - 1]
+    : null;
+  const currentPauseDuration = job.status === 'paused' && lastPause && lastPause.type === 'pause'
+    ? now - lastPause.timestamp
+    : 0;
+  return now - job.startTime - job.totalPauseTime - currentPauseDuration;
 }
 
 function formatTime(ms) {
