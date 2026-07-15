@@ -173,9 +173,17 @@ begin
     raise exception 'invalid or expired invite code';
   end if;
 
+  -- If the caller is already a member, do not consume a use or re-add them.
+  -- (Prevents a member re-redeeming to burn max_uses / inflate used_count.)
+  if exists (
+    select 1 from public.dealership_memberships m
+    where m.dealership_id = v_code.dealership_id and m.user_id = auth.uid()
+  ) then
+    return v_code.dealership_id;
+  end if;
+
   insert into public.dealership_memberships (dealership_id, user_id, role, is_active)
-  values (v_code.dealership_id, auth.uid(), v_code.role, true)
-  on conflict (dealership_id, user_id) do nothing;
+  values (v_code.dealership_id, auth.uid(), v_code.role, true);
 
   update public.dealership_invite_codes
   set used_count = used_count + 1

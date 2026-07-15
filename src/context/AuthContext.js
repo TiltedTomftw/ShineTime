@@ -49,10 +49,14 @@ export function AuthProvider({ children }) {
   const [initializing, setInitializing] = React.useState(true);
   const [loadingUserData, setLoadingUserData] = React.useState(false);
   const [error, setError] = React.useState('');
+  // Tracks which user we've already bootstrapped so init() and
+  // onAuthStateChange (which both fire on launch) don't double-bootstrap.
+  const bootstrapUserIdRef = React.useRef(null);
 
   const hasCompletedDetailerSetup = Boolean(activeOperationalRole && activeOperationalUser?.name);
 
   const resetUserState = React.useCallback(async () => {
+    bootstrapUserIdRef.current = null;
     setProfile(null);
     setMemberships([]);
     setActiveDealership(null);
@@ -150,9 +154,11 @@ export function AuthProvider({ children }) {
         full_name: candidate || null,
       };
 
+      // Upsert (not insert) so a concurrent bootstrap racing on the same user
+      // cannot fail with a primary-key unique violation.
       const { data: inserted, error: insertError } = await supabase
         .from('profiles')
-        .insert(insertPayload)
+        .upsert(insertPayload, { onConflict: 'user_id' })
         .select('user_id, full_name, created_at, updated_at')
         .single();
 
@@ -164,12 +170,18 @@ export function AuthProvider({ children }) {
   }, []);
 
   const bootstrapUser = React.useCallback(async (user) => {
+    // Skip if we've already bootstrapped (or are bootstrapping) this user —
+    // getSession() and the INITIAL_SESSION auth event both call this on launch.
+    if (bootstrapUserIdRef.current === user.id) return;
+    bootstrapUserIdRef.current = user.id;
     setLoadingUserData(true);
     setError('');
     try {
       await ensureProfile(user);
       await loadMemberships(user.id);
     } catch (e) {
+      // Allow a retry on the next auth event if bootstrap failed.
+      bootstrapUserIdRef.current = null;
       setError(e?.message || 'Failed to load account data');
     } finally {
       setLoadingUserData(false);

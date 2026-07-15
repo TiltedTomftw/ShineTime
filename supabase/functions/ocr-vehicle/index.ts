@@ -87,6 +87,17 @@ Deno.serve(async (req) => {
       return json(400, { error: "Image data is required" });
     }
 
+    // Cap payload size so a caller cannot exhaust memory or burn Gemini quota
+    // with an oversized image. ~8MB of base64 ≈ ~6MB decoded.
+    const MAX_BASE64_LENGTH = 8 * 1024 * 1024;
+    if (image.base64.length > MAX_BASE64_LENGTH) {
+      return json(413, { error: "Image too large; please retake at lower resolution" });
+    }
+
+    if (!/^image\//.test(image.mimeType)) {
+      return json(400, { error: "Unsupported image type" });
+    }
+
     const prompt =
       "You are extracting vehicle details from a keytag or window sticker. " +
       "Return JSON only with keys: stockNumber, make, model, year, color. " +

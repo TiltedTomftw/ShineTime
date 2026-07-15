@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
+import { computeActiveTime, computePauseDuration, accumulateDetailerTime } from './timeMath';
 
 // Sanitize input to prevent XSS and injection attacks
 const sanitizeInput = (input) => {
@@ -470,8 +471,7 @@ export const replayPendingQueue = async () => {
   return { replayed, remaining: stillPending.length };
 };
 
-// Sync jobs from server
-export const syncJobsFromServer = async () => {
+const runSyncFromServer = async () => {
   try {
     // Retry any writes that failed while offline before pulling remote state.
     await replayPendingQueue();
@@ -486,19 +486,27 @@ export const syncJobsFromServer = async () => {
       const currentUserId = session?.user?.id || null;
       const roleFilteredJobs = scopeToCurrentDetailer
         ? supabaseJobs.filter((job) => {
-            if (currentUserId && (job.assignedDetailerId === currentUserId || job.createdByUserId === currentUserId)) {
-              return true;
+            const hasServerIdentity = !!(job.assignedDetailerId || job.createdByUserId);
+            if (currentUserId && hasServerIdentity) {
+              // Authoritative id-based scoping. Do NOT fall back to name here:
+              // two detailers can share a display name.
+              return job.assignedDetailerId === currentUserId || job.createdByUserId === currentUserId;
             }
+            // Legacy jobs without server ids: fall back to name match.
             return !!detailerName && job.detailerName === detailerName;
           })
         : supabaseJobs;
 
       // Supabase is authoritative for this tenant/role scope, but merge in any
-      // local jobs that are newer than (or missing from) the remote set so an
-      // unsynced offline edit is never silently overwritten.
-      const localJobs = await getLocalJobs();
-      const merged = mergeJobsPreferLocalIfNewer(localJobs, roleFilteredJobs);
-      await saveLocalJobs(merged);
+      // local jobs newer than (or missing from) the remote set so an unsynced
+      // offline edit is never overwritten. Done under the write lock so a
+      // concurrent user mutation is not lost.
+      const merged = await withJobsLock(async () => {
+        const localJobs = await getLocalJobs();
+        const next = mergeJobsPreferLocalIfNewer(localJobs, roleFilteredJobs);
+        await saveLocalJobs(next);
+        return next;
+      });
       console.log(`Synced ${roleFilteredJobs.length} remote jobs; ${merged.length} after local merge`);
       return merged;
     }
@@ -508,6 +516,20 @@ export const syncJobsFromServer = async () => {
 
   // Return local jobs as final fallback
   return await getLocalJobs();
+};
+
+// Sync jobs from server. Concurrent callers share one in-flight request so a
+// single screen focus (which calls several getters) doesn't trigger a stampede
+// of full table pulls.
+let inFlightServerSync = null;
+export const syncJobsFromServer = async () => {
+  if (inFlightServerSync) return inFlightServerSync;
+  inFlightServerSync = runSyncFromServer();
+  try {
+    return await inFlightServerSync;
+  } finally {
+    inFlightServerSync = null;
+  }
 };
 
 // Get all jobs from local storage
@@ -528,6 +550,39 @@ export const saveLocalJobs = async (jobs) => {
   } catch (error) {
     console.error('Error saving local jobs:', error);
   }
+};
+
+// Serialize local read-modify-write so two concurrent mutations (or a
+// background sync racing a user action) cannot clobber each other via
+// last-write-wins on the whole jobs array.
+let jobsMutex = Promise.resolve();
+const withJobsLock = (fn) => {
+  const run = jobsMutex.then(fn, fn);
+  // Keep the chain alive even if this operation rejects.
+  jobsMutex = run.then(() => {}, () => {});
+  return run;
+};
+
+// Atomically read local jobs, let `mutator(jobs)` mutate the array in place,
+// then persist — all under the lock. Network I/O must stay OUTSIDE the mutator
+// to avoid holding the lock across slow calls (and to avoid re-entrant locks).
+const mutateLocalJobs = async (mutator) =>
+  withJobsLock(async () => {
+    const jobs = await getLocalJobs();
+    const result = await mutator(jobs);
+    await saveLocalJobs(jobs);
+    return result;
+  });
+
+// Find a job in the local cache; if it's missing (e.g. the cache was just
+// replaced by a role-filtered remote sync) pull from the server and retry so
+// note/photo/pause/resume don't spuriously fail on a job that exists remotely.
+const findJobWithRecovery = async (jobId) => {
+  const local = await getLocalJobs();
+  const found = local.find((j) => j.jobId === jobId);
+  if (found) return found;
+  const remote = await syncJobsFromServer();
+  return remote.find((j) => j.jobId === jobId) || null;
 };
 
 // Create new job
@@ -570,9 +625,9 @@ export const createJob = async (vehicleData) => {
 
   addCustodyEvent(newJob, 'start', detailerName, '');
 
-  const jobs = await getLocalJobs();
-  jobs.unshift(newJob);
-  await saveLocalJobs(jobs);
+  await mutateLocalJobs((jobs) => {
+    jobs.unshift(newJob);
+  });
   // Do not block UI on network sync; persist locally first and sync in background.
   syncJobToServer(newJob)
     .then((ok) => {
@@ -615,144 +670,141 @@ export const getCompletedJobs = async (filterDate = null) => {
 // Pause job
 export const pauseJob = async (jobId, noteText = '') => {
   const pauseTime = Date.now();
-  const jobs = await getLocalJobs();
-  const job = jobs.find(j => j.jobId === jobId);
-  
-  if (job && job.status === 'in_progress') {
-    // Track current detailer's time before pausing
-    if (!job.detailerTimeTracking) job.detailerTimeTracking = {};
-    const detailerTime = job.detailerTimeTracking[job.detailerName] || 0;
-    const sessionTime = pauseTime - (job.currentDetailerStartTime || job.startTime);
-    job.detailerTimeTracking[job.detailerName] = detailerTime + sessionTime;
-    
-    job.pauseEvents.push({ 
-      type: 'pause', 
-      timestamp: pauseTime,
-      detailerName: job.detailerName 
-    });
-    job.status = 'paused';
-    const detailerName = await getDetailerName();
-    const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
+  const detailerName = await getDetailerName();
+  const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
+
+  await findJobWithRecovery(jobId);
+
+  const job = await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (!target || target.status !== 'in_progress') return null;
+
+    // Track current detailer's time before pausing (clamped against clock skew).
+    if (!target.detailerTimeTracking) target.detailerTimeTracking = {};
+    target.detailerTimeTracking[target.detailerName] = accumulateDetailerTime(
+      target.detailerTimeTracking[target.detailerName] || 0,
+      target.currentDetailerStartTime || target.startTime,
+      pauseTime
+    );
+
+    target.pauseEvents = ensureArray(target.pauseEvents);
+    target.pauseEvents.push({ type: 'pause', timestamp: pauseTime, detailerName: target.detailerName });
+    target.status = 'paused';
     if (sanitizedNote) {
-      const notes = ensureArray(job.notes);
-      notes.unshift({
-        timestamp: Date.now(),
-        detailerName: detailerName || 'Unknown',
-        text: sanitizedNote,
+      const notes = ensureArray(target.notes);
+      notes.unshift({ timestamp: pauseTime, detailerName: detailerName || 'Unknown', text: sanitizedNote });
+      target.notes = notes;
+      target.latestNote = sanitizedNote;
+    }
+    target.updatedAt = pauseTime;
+    addCustodyEvent(target, 'pause', detailerName, sanitizedNote);
+    return target;
+  });
+
+  if (!job) return null;
+
+  const synced = await syncJobToServer(job);
+  if (synced) {
+    try {
+      await insertSupabaseWorkLog({
+        job,
+        eventType: 'pause',
+        actorName: detailerName,
+        noteText: sanitizedNote,
+        eventTimestamp: pauseTime,
       });
-      job.notes = notes;
-      job.latestNote = sanitizedNote;
+    } catch (error) {
+      console.log('Could not sync pause work log to Supabase:', error.message);
     }
-    job.updatedAt = pauseTime;
-    addCustodyEvent(job, 'pause', detailerName, sanitizedNote);
-    await saveLocalJobs(jobs);
-    const synced = await syncJobToServer(job);
-    if (synced) {
-      try {
-        await insertSupabaseWorkLog({
-          job,
-          eventType: 'pause',
-          actorName: detailerName,
-          noteText: sanitizedNote,
-          eventTimestamp: pauseTime,
-        });
-      } catch (error) {
-        console.log('Could not sync pause work log to Supabase:', error.message);
-      }
-    }
-    return job;
   }
-  
-  return null;
+  return job;
 };
 
 // Resume job
 export const resumeJob = async (jobId) => {
   const resumeTime = Date.now();
-  const jobs = await getLocalJobs();
-  const job = jobs.find(j => j.jobId === jobId);
-  
-  if (job && job.status === 'paused') {
-    const lastPause = job.pauseEvents[job.pauseEvents.length - 1];
+  await findJobWithRecovery(jobId);
+
+  const job = await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (!target || target.status !== 'paused') return null;
+
+    const events = ensureArray(target.pauseEvents);
+    const lastPause = events[events.length - 1];
     if (lastPause && lastPause.type === 'pause') {
-      const pauseDuration = resumeTime - lastPause.timestamp;
-      job.totalPauseTime += pauseDuration;
+      target.totalPauseTime = Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, resumeTime);
     }
-    
-    job.pauseEvents.push({ 
-      type: 'resume', 
-      timestamp: resumeTime,
-      detailerName: job.detailerName 
-    });
-    job.status = 'in_progress';
-    job.currentDetailerStartTime = resumeTime; // Reset start time for current detailer
-    job.updatedAt = resumeTime;
-    addCustodyEvent(job, 'resume', job.detailerName, '');
-    await saveLocalJobs(jobs);
-    const synced = await syncJobToServer(job);
-    if (synced) {
-      try {
-        await insertSupabaseWorkLog({
-          job,
-          eventType: 'resume',
-          actorName: job.detailerName,
-          eventTimestamp: resumeTime,
-        });
-      } catch (error) {
-        console.log('Could not sync resume work log to Supabase:', error.message);
-      }
+
+    events.push({ type: 'resume', timestamp: resumeTime, detailerName: target.detailerName });
+    target.pauseEvents = events;
+    target.status = 'in_progress';
+    target.currentDetailerStartTime = resumeTime; // Reset start time for current detailer
+    target.updatedAt = resumeTime;
+    addCustodyEvent(target, 'resume', target.detailerName, '');
+    return target;
+  });
+
+  if (!job) return null;
+
+  const synced = await syncJobToServer(job);
+  if (synced) {
+    try {
+      await insertSupabaseWorkLog({
+        job,
+        eventType: 'resume',
+        actorName: job.detailerName,
+        eventTimestamp: resumeTime,
+      });
+    } catch (error) {
+      console.log('Could not sync resume work log to Supabase:', error.message);
     }
-    return job;
   }
-  
-  return null;
+  return job;
 };
 
 // Complete job
 export const completeJob = async (jobId) => {
   console.log('Completing job:', jobId);
   const endTime = Date.now();
-  const jobs = await getLocalJobs();
-  let job = jobs.find(j => j.jobId === jobId);
-  let workingJobs = jobs;
-  
-  if (!job) {
-    // Local cache may have been refreshed from remote; recover before failing.
-    const remoteJobs = await syncJobsFromServer();
-    job = remoteJobs.find(j => j.jobId === jobId);
-    if (!job) {
-      console.error('Job not found:', jobId);
-      throw new Error('Job not found');
-    }
-    workingJobs = remoteJobs;
+
+  // Recover from remote before failing, then mutate atomically under the lock.
+  const recovered = await findJobWithRecovery(jobId);
+  if (!recovered) {
+    console.error('Job not found:', jobId);
+    throw new Error('Job not found');
   }
-  
-  console.log('Found job:', job);
-  
-  // If job was paused, calculate final pause time
-  if (job.status === 'paused') {
-    const lastPause = job.pauseEvents[job.pauseEvents.length - 1];
-    if (lastPause && lastPause.type === 'pause') {
-      const pauseDuration = endTime - lastPause.timestamp;
-      job.totalPauseTime += pauseDuration;
+
+  const job = await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (!target) return null;
+
+    // If job was paused, fold in the final pause span (clamped).
+    if (target.status === 'paused') {
+      const events = ensureArray(target.pauseEvents);
+      const lastPause = events[events.length - 1];
+      if (lastPause && lastPause.type === 'pause') {
+        target.totalPauseTime = Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, endTime);
+      }
     }
-  }
-  
-  // Track final detailer's time
-  if (!job.detailerTimeTracking) job.detailerTimeTracking = {};
-  const detailerTime = job.detailerTimeTracking[job.detailerName] || 0;
-  const sessionTime = endTime - (job.currentDetailerStartTime || job.startTime);
-  job.detailerTimeTracking[job.detailerName] = detailerTime + sessionTime;
-  
-  job.endTime = endTime;
-  job.totalActiveTime = endTime - job.startTime - job.totalPauseTime;
-  job.status = 'completed';
-  job.updatedAt = endTime;
-  addCustodyEvent(job, 'complete', job.detailerName, '');
-  
-  console.log('Saving completed job:', job);
-  console.log('Detailer time breakdown:', job.detailerTimeTracking);
-  await saveLocalJobs(workingJobs);
+
+    // Track final detailer's time (clamped against clock skew).
+    if (!target.detailerTimeTracking) target.detailerTimeTracking = {};
+    target.detailerTimeTracking[target.detailerName] = accumulateDetailerTime(
+      target.detailerTimeTracking[target.detailerName] || 0,
+      target.currentDetailerStartTime || target.startTime,
+      endTime
+    );
+
+    target.endTime = endTime;
+    target.totalActiveTime = computeActiveTime(target.startTime, endTime, target.totalPauseTime);
+    target.status = 'completed';
+    target.updatedAt = endTime;
+    addCustodyEvent(target, 'complete', target.detailerName, '');
+    return target;
+  });
+
+  if (!job) throw new Error('Job not found');
+
   const synced = await syncJobToServer(job);
   if (synced) {
     try {
@@ -772,17 +824,6 @@ export const completeJob = async (jobId) => {
 
 // Add a note to an in-progress job
 export const addJobNote = async (jobId, noteText) => {
-  const jobs = await getLocalJobs();
-  const job = jobs.find(j => j.jobId === jobId);
-
-  if (!job) {
-    throw new Error('Job not found');
-  }
-
-  if (job.status === 'completed') {
-    throw new Error('Cannot add notes to a completed job');
-  }
-
   const detailerName = await getDetailerName();
   const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
 
@@ -790,19 +831,30 @@ export const addJobNote = async (jobId, noteText) => {
     throw new Error('Note cannot be empty');
   }
 
-  const notes = ensureArray(job.notes);
+  const existing = await findJobWithRecovery(jobId);
+  if (!existing) {
+    throw new Error('Job not found');
+  }
+  if (existing.status === 'completed') {
+    throw new Error('Cannot add notes to a completed job');
+  }
+
   const noteTimestamp = Date.now();
-  notes.unshift({
-    timestamp: noteTimestamp,
-    detailerName: detailerName || 'Unknown',
-    text: sanitizedNote,
+  const job = await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (!target || target.status === 'completed') return null;
+    const notes = ensureArray(target.notes);
+    notes.unshift({ timestamp: noteTimestamp, detailerName: detailerName || 'Unknown', text: sanitizedNote });
+    target.notes = notes;
+    target.latestNote = sanitizedNote;
+    target.updatedAt = noteTimestamp;
+    return target;
   });
 
-  job.notes = notes;
-  job.latestNote = sanitizedNote;
-  job.updatedAt = noteTimestamp;
+  if (!job) {
+    throw new Error('Cannot add notes to a completed job');
+  }
 
-  await saveLocalJobs(jobs);
   const synced = await syncJobToServer(job);
   if (synced) {
     try {
@@ -821,24 +873,21 @@ export const addJobNote = async (jobId, noteText) => {
 
 // Add a photo to a job (stored on server)
 export const addJobPhoto = async (jobId, image) => {
-  const jobs = await getLocalJobs();
-  const job = jobs.find(j => j.jobId === jobId);
-
-  if (!job) {
+  const existing = await findJobWithRecovery(jobId);
+  if (!existing) {
     throw new Error('Job not found');
   }
-
-  if (job.status === 'completed') {
+  if (existing.status === 'completed') {
     throw new Error('Cannot add photos to a completed job');
   }
 
   const context = await getSupabaseSyncContext();
-  const synced = await syncJobToServer(job);
+  const synced = await syncJobToServer(existing);
   if (!synced) {
     throw new Error('Could not sync job before photo upload');
   }
 
-  const remoteJobId = await getRemoteJobIdByLegacyId(context.dealershipId, job.jobId);
+  const remoteJobId = await getRemoteJobIdByLegacyId(context.dealershipId, existing.jobId);
   if (!remoteJobId) {
     throw new Error('Remote job not found for photo upload');
   }
@@ -865,32 +914,14 @@ export const addJobPhoto = async (jobId, image) => {
     throw uploadError;
   }
 
-  const { data: signedData, error: signedError } = await supabase.storage
-    .from('job-photos')
-    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
-
-  if (signedError) {
-    throw signedError;
-  }
-
   const detailerName = await getDetailerName();
   const timestamp = Date.now();
-  const photo = {
-    url: signedData?.signedUrl || '',
-    timestamp,
-    detailerName: detailerName || 'Unknown',
-    note: sanitizeInput(image.note || '').slice(0, 500),
-    storagePath,
-  };
+  const note = sanitizeInput(image.note || '').slice(0, 500);
 
-  const photos = ensureArray(job.photos);
-  photos.unshift(photo);
-  job.photos = photos;
-  job.updatedAt = timestamp;
-
-  await saveLocalJobs(jobs);
-  await syncJobToServer(job);
-
+  // Persist the metadata row FIRST. If it fails, delete the orphaned storage
+  // object and surface the error — otherwise the object leaks and the photo
+  // disappears once its short-lived signed URL expires (there'd be no row for
+  // enrichJobFromNormalizedTables to re-sign from).
   const { error: photoRowError } = await supabase
     .from('job_photos')
     .insert({
@@ -903,17 +934,42 @@ export const addJobPhoto = async (jobId, image) => {
       created_at: toIsoOrNull(timestamp) || new Date().toISOString(),
       metadata: {
         mimeType,
-        note: photo.note || '',
+        note,
         source: 'mobile',
-        legacy_job_id: job.jobId,
+        legacy_job_id: existing.jobId,
       },
     });
 
   if (photoRowError) {
-    console.log('Could not insert job_photos row:', photoRowError.message);
+    await supabase.storage.from('job-photos').remove([storagePath]).catch(() => {});
+    throw new Error('Could not save photo record: ' + photoRowError.message);
   }
 
-  return { job };
+  const { data: signedData } = await supabase.storage
+    .from('job-photos')
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+
+  const photo = {
+    url: signedData?.signedUrl || '',
+    timestamp,
+    detailerName: detailerName || 'Unknown',
+    note,
+    storagePath,
+  };
+
+  const job = await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (!target) return null;
+    target.photos = [photo, ...ensureArray(target.photos)];
+    target.updatedAt = timestamp;
+    return target;
+  });
+
+  if (job) {
+    await syncJobToServer(job);
+  }
+
+  return { job: job || existing };
 };
 
 // Sync single job to server
@@ -956,10 +1012,17 @@ export const syncJobToServer = async (job) => {
     console.log(`[sync] inserted job ${job.jobId}`);
     return true;
   } catch (error) {
-    console.log(`[sync] failed for ${job?.jobId || 'unknown'}:`, error.message);
-    // Queue for retry on next sync — unless we're already draining the queue,
-    // in which case replayPendingQueue() tracks the failure itself.
-    if (!isReplayingQueue) {
+    // Postgres unique_violation (e.g. one-active-job-per-stock) will never
+    // succeed on retry — don't poison the pending queue with an endless retry.
+    const isPermanentConflict = error?.code === '23505';
+    console.log(
+      `[sync] failed for ${job?.jobId || 'unknown'}:`,
+      error.message,
+      isPermanentConflict ? '(permanent conflict; not retrying)' : ''
+    );
+    // Queue for retry on next sync — unless we're already draining the queue
+    // (replayPendingQueue tracks that itself) or the failure is permanent.
+    if (!isReplayingQueue && !isPermanentConflict) {
       await enqueuePendingJob(job);
     }
     return false;

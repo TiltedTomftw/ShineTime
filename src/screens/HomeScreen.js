@@ -15,17 +15,27 @@ export default function HomeScreen({ navigation }) {
   const [recentJobs, setRecentJobs] = React.useState([]);
   const [pausedCount, setPausedCount] = React.useState(0);
 
-  const loadData = async () => {
-    const overallStats = await getOverallStats();
-    setStats(overallStats);
-    const allJobs = await getAllJobs();
-    setRecentJobs(allJobs.slice(0, 8));
-    setPausedCount(allJobs.filter((j) => j.status === 'paused').length);
-  };
-
   useFocusEffect(
     React.useCallback(() => {
+      let active = true;
+      const loadData = async () => {
+        try {
+          const overallStats = await getOverallStats();
+          if (!active) return;
+          setStats(overallStats);
+          const allJobs = await getAllJobs();
+          if (!active) return;
+          setRecentJobs(allJobs.slice(0, 8));
+          setPausedCount(allJobs.filter((j) => j.status === 'paused').length);
+        } catch (error) {
+          console.log('Could not load home data:', error?.message || error);
+        }
+      };
       loadData();
+      // Cancel state updates if the screen blurs/unmounts mid-load.
+      return () => {
+        active = false;
+      };
     }, [])
   );
 
