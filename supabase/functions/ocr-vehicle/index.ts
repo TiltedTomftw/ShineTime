@@ -125,7 +125,11 @@ Deno.serve(async (req) => {
           ],
           generationConfig: {
             temperature: 0,
-            maxOutputTokens: 256,
+            // gemini-2.5-flash is a thinking model; disable reasoning (this is a
+            // simple extraction) so output tokens aren't spent before the JSON,
+            // and keep headroom so the answer isn't truncated (MAX_TOKENS).
+            thinkingConfig: { thinkingBudget: 0 },
+            maxOutputTokens: 1024,
             responseMimeType: "application/json",
           },
         }),
