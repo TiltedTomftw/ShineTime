@@ -1,179 +1,130 @@
 # Shinetime
 
-Simple mobile app for tracking vehicle detailing productivity at car dealerships.
+Mobile app for tracking vehicle detailing productivity at car dealerships.
 
 ## Architecture
 
-**Simple local network setup - no cloud, no authentication, no complexity.**
+**Cloud-backed via Supabase. No local server to run.**
 
-- **Mobile App**: React Native + Expo (stores data locally, syncs to server)
-- **Server**: Node.js + Express + SQLite (runs on manager's PC)
-- **Dashboard**: HTML web page (served by the server)
-- **Cost**: $0 forever
+- **Mobile App**: React Native + Expo. Talks directly to Supabase; caches jobs
+  locally (AsyncStorage) and syncs in the background.
+- **Backend**: Supabase — Postgres (with Row-Level Security for per-dealership
+  tenant isolation), Auth (email/password), Storage (private `job-photos`
+  bucket), and Edge Functions.
+- **OCR**: `ocr-vehicle` Edge Function (calls Gemini server-side; the API key
+  never ships in the app).
+- **Manager Dashboard**: a static page hosted on GitHub Pages that reads from
+  Supabase directly.
 
-## How It Works
-
-1. **Manager's PC** runs a simple server on local network
-2. **Detailers** use mobile app to track jobs (works offline)
-3. **Data syncs** automatically when phones are on WiFi
-4. **Manager** views dashboard at `http://192.168.4.93:3000`
+There is no PC server, no tunnel, and nothing to start on a local network — the
+app is self-contained and points at a Supabase project via `.env`.
 
 ## Project Structure
 
 ```
 Shinetime/
-├── mobile-app/              # React Native Expo app
-│   ├── App.js
-│   ├── src/
-│   │   ├── screens/        # HomeScreen, NewJobScreen, HistoryScreen
-│   │   ├── navigation/     # React Navigation setup
-│   │   ├── services/       # Storage & API services
-│   │   └── config/         # API configuration
-│   └── package.json
-│
-└── server/                  # Node.js server
-    ├── server.js           # Express API + SQLite
-    ├── public/
-    │   └── index.html      # Manager dashboard
-    └── package.json
+├── App.js                     # Entry + auth-gated navigation
+├── src/
+│   ├── screens/               # Home, NewJob, InProgress, History, JobDetail,
+│   │                          # Auth, DealershipSelect, RoleSelection, UserPin,
+│   │                          # CreateDealership, JoinByCode, ManageInviteCodes
+│   ├── navigation/            # React Navigation stack
+│   ├── context/AuthContext.js # Session, memberships, active dealership/role
+│   ├── services/              # storage.js (jobs/sync), ocr.js, timeMath.js
+│   └── lib/supabase.js        # Supabase client
+├── supabase/
+│   ├── migrations/            # SQL schema (001 foundation … 004 onboarding)
+│   └── functions/             # ocr-vehicle, manager-dashboard
+├── web-dashboard/             # Improved static manager dashboard (see its README)
+└── docs/                      # Migration plans, edge-function + RLS notes
 ```
 
-## Setup Instructions
+## Setup
 
-### 1. Mobile App Setup
+### 1. Configure Supabase credentials
+
+Create a `.env` in the repo root (gitignored):
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=https://YOUR-PROJECT-ref.supabase.co
+EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_OR_PUBLISHABLE_KEY
+```
+
+The anon/publishable key is safe to ship in the app — **Row-Level Security is the
+security boundary**, so the SQL policies in `supabase/migrations/` must be applied
+to the project.
+
+### 2. Run the app
 
 ```bash
-# Install dependencies
 npm install
-
-# Start Expo development server
-npm start
-
-# Scan QR code with Expo Go app on your phone
+npm start           # then scan the QR code with Expo Go
+# or: npm run android / npm run ios / npm run web
 ```
 
-### 2. Server Setup
+### 3. Backend (one-time, per Supabase project)
 
-```bash
-# Navigate to server folder
-cd server
-
-# Install dependencies
-npm install
-
-# Start the server
-npm start
-```
-
-The server will display your PC's IP address. Example:
-```
-Your PC IP addresses:
-  - 192.168.1.100
-```
-
-### 3. Configure Mobile App
-
-1. Open `src/config/api.js` in the mobile app
-2. Update `SERVER_BASE_URL` with your PC's IP:
-   ```javascript
-  const SERVER_BASE_URL = 'http://192.168.1.100:3000';
-   ```
-3. Save and reload the app
-
-### 4. Access Manager Dashboard
-
-On the manager's PC, open a browser to:
-- `http://192.168.4.93:3000` (on the same PC)
-- `http://192.168.4.93:3000` (from other devices on the network)
+- Apply the migrations in `supabase/migrations/` (Supabase SQL editor or
+  `supabase db push`).
+- Deploy the OCR function (see `docs/SUPABASE_OCR_EDGE_FUNCTION.md`) and set its
+  `GEMINI_API_KEY` secret.
+- Create a dealership + a user membership (self-serve onboarding is drafted in
+  migration `004`; until wired, seed via the Supabase dashboard).
 
 ## Usage
 
-### For Detailers:
+**Detailers**: sign in → pick dealership → pick role → start a job (scan the
+keytag or type the stock number) → Pause/Resume as needed → Complete.
 
-1. Open the app
-2. Tap "Start New Job"
-3. Enter VIN or Stock Number
-4. Tap "Begin Detailing"
-5. Use Pause/Resume as needed
-6. Tap "Complete" when done
-
-### For Managers:
-
-1. Open web browser to server address
-2. View real-time job status
-3. See completed jobs and statistics
-4. Dashboard auto-refreshes every 12 seconds
+**Managers**: open the dashboard URL and sign in to see live jobs, per-detailer
+detail times, notes, and photos.
 
 ## Features
 
-- ✅ Start/Pause/Resume/Complete jobs
-- ✅ Track active time (excludes pauses)
-- ✅ Works offline (syncs when online)
-- ✅ Manager dashboard with notes, photos, and custody timelines
-- ✅ OCR keytag scanning
-- ✅ Photo uploads with storage limits + thumbnail previews
-- ✅ Job history and reporting
-- ✅ No login required
-- ✅ Simple local network setup
-
-## Upcoming Features
-
-- 📷 Barcode scanner for VIN/Stock numbers
-- 📊 Daily/weekly reports
-- 🔔 Notifications for long-running jobs
+- Start / Pause / Resume / Complete jobs with active-time tracking (pause-aware)
+- Offline-tolerant: jobs cache locally and sync when back online
+- OCR keytag scanning to auto-fill vehicle details
+- Photos to private Storage, viewed via short-lived signed URLs
+- Notes + chain-of-custody timeline per job
+- Manager dashboard with stats and filters
+- Per-dealership tenant isolation enforced by RLS
 
 ## Development
 
-### Run Mobile App
-
 ```bash
-npm start           # Start Expo
-npm run android     # Run on Android
-npm run ios         # Run on iOS (Mac only)
-```
-
-### Run Server
-
-```bash
-cd server
-npm start           # Production
-npm run dev         # Development (auto-restart)
+npm start           # Expo
+npm run android     # Android
+npm run ios         # iOS (Mac only)
+npm test            # unit tests (node --test) — currently time-math
 ```
 
 ## Troubleshooting
 
-### Mobile app can't connect to server
-
-1. Make sure your phone and PC are on the same WiFi network
-2. Check the IP address in `src/config/api.js` matches your PC's IP
-3. Make sure the server is running (check terminal)
-4. Try disabling your PC's firewall temporarily
-
-### Server won't start
-
-1. Make sure port 3000 isn't already in use
-2. Check Node.js is installed: `node --version`
-3. Reinstall dependencies: `cd server && npm install`
-
-### App crashes or won't load
-
-1. Clear Expo cache: `npx expo start --clear`
-2. Reinstall dependencies: `rm -rf node_modules && npm install`
-3. Make sure you're using Node.js LTS version
+- **"Supabase env vars missing" warning** — add `.env` (step 1) and restart with
+  `npx expo start -c`.
+- **Auth / empty data** — the account has no active dealership membership, or the
+  RLS migrations aren't applied to the project.
+- **OCR fails** — the `ocr-vehicle` function isn't deployed or `GEMINI_API_KEY`
+  isn't set as a function secret.
+- **App won't load** — `npx expo start --clear`, or reinstall `node_modules`.
 
 ## Tech Stack
 
-- **Mobile**: React Native, Expo, AsyncStorage, React Navigation, Axios
-- **Server**: Node.js, Express, SQLite (better-sqlite3), CORS, Sharp (thumbnails)
-- **Dashboard**: HTML, CSS, Vanilla JavaScript
+- **Mobile**: React Native, Expo, AsyncStorage, React Navigation, @supabase/supabase-js
+- **Backend**: Supabase (Postgres + RLS, Auth, Storage, Edge Functions/Deno)
+- **Dashboard**: static HTML/JS + supabase-js
 
 ## Requirements
 
-- Node.js 18+ LTS
-- Expo Go app (iOS/Android)
-- Windows/Mac/Linux PC for server
-- Local WiFi network
+- Node.js 20+ LTS
+- Expo Go (iOS/Android) or a dev build
+- A Supabase project (URL + anon key in `.env`)
+
+## Status
+
+See `docs/OVERNIGHT_FINAL_SUMMARY.md` and `docs/SUPABASE_MIGRATION_PLAN.md` for
+current state and the launch checklist.
 
 ## License
 
-Private project - All rights reserved
+Private project — all rights reserved.

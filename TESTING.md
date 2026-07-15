@@ -1,142 +1,61 @@
 # Testing Shinetime
 
-## ✅ Server is Running!
+The app talks directly to Supabase — there is no local server to start.
 
-Your server is live at:
-- **Dashboard**: http://192.168.4.93:3000
-- **Your PC IP**: 192.168.4.93
+## Prerequisites
 
----
+- Repo-root `.env` with `EXPO_PUBLIC_SUPABASE_URL` and
+  `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+- The Supabase project has the migrations applied and at least one dealership +
+  user membership.
 
-## Testing on PC (Right Now)
-
-### 1. View the Dashboard
-The Simple Browser should show the manager dashboard with:
-- Stats cards (all showing 0 since no data yet)
-- Empty jobs table
-- Auto-refresh every 10 seconds
-
-### 2. Test the API
-Open PowerShell and run these commands to test:
-
-```powershell
-# Check server health
-curl http://192.168.4.93:3000/api/health
-
-# Create a test job
-curl -X POST http://192.168.4.93:3000/api/jobs -H "Content-Type: application/json" -d '{\"jobId\":\"test123\",\"deviceId\":\"testdevice\",\"vin\":\"1HGBH41JXMN109186\",\"make\":\"Honda\",\"model\":\"Accord\",\"startTime\":1700000000000,\"status\":\"in_progress\",\"createdAt\":1700000000000}'
-
-# View all jobs
-curl http://192.168.4.93:3000/api/jobs
-
-# Get stats
-curl http://192.168.4.93:3000/api/stats
-```
-
-### 3. View Test Data in Dashboard
-After creating the test job, refresh the dashboard - you should see it appear!
-
----
-
-## Testing Mobile App
-
-### Option 1: Test on Your Phone (Recommended)
-
-1. **Make sure your phone is on the same WiFi as this PC**
-
-2. **Update the API config**:
-   - Open `src/config/api.js`
-   - Change line 3 to:
-     ```javascript
-   const API_BASE_URL = 'http://192.168.4.93:3000/api';
-     ```
-
-3. **Install Expo Go** on your phone:
-   - iOS: https://apps.apple.com/app/expo-go/id982107779
-   - Android: https://play.google.com/store/apps/details?id=host.exp.exponent
-
-4. **Start the mobile app**:
-   ```bash
-   npm start
-   ```
-
-5. **Scan the QR code** with:
-   - iOS: Camera app → opens Expo Go automatically
-   - Android: Expo Go app → Scan QR Code button
-
-6. **Test the app**:
-   - Tap "Start New Job"
-   - Enter a VIN (like: 1HGBH41JXMN109186)
-   - Fill in vehicle details
-   - Tap "Begin Detailing"
-   - Check dashboard on PC - job should appear!
-
-### Option 2: Test in iOS Simulator (Mac Only)
+## Unit tests
 
 ```bash
-npm run ios
+npm test        # node --test — currently the time-math suite
 ```
 
-### Option 3: Test in Android Emulator
-
-1. Install Android Studio
-2. Create an emulator
-3. Run:
-   ```bash
-   npm run android
-   ```
-
-### Option 4: Test in Web Browser (Limited)
+## Running the app
 
 ```bash
-npm run web
+npm install
+npm start       # scan the QR code with Expo Go
+# or npm run android / npm run ios / npm run web
 ```
 
-Note: Barcode scanner won't work in browser, but you can test the UI.
+Web (`npm run web`) is fine for UI, but the camera/OCR flow needs a real device.
 
----
+## Manual smoke test (do this on a device before trusting a build)
 
-## What You Can Test
+1. **Auth** — sign in; confirm you land on the dealership → role → PIN gate and
+   into Home.
+2. **Create** — Start New Job; scan a keytag (or type a stock number); confirm
+   OCR auto-fills; Begin Detailing.
+3. **Timing** — Pause, wait, Resume, Complete; confirm active time excludes the
+   pause and is never negative.
+4. **Notes & photos** — add a note and a photo; reopen the job and confirm both
+   render (photo via a fresh signed URL).
+5. **Offline** — enable airplane mode; create/complete a job; re-enable network;
+   confirm it syncs (check the pending-queue replays and nothing is lost).
+6. **Concurrency** — on a shared tablet, pause a job while another action/refresh
+   runs; confirm neither change is lost (this exercises the write mutex).
+7. **Dashboard** — open the manager dashboard URL, sign in, confirm the job and
+   stats appear (set the date filter to **All Time**).
 
-### Basic Flow:
-1. ✅ Server runs and shows dashboard
-2. ✅ Mobile app connects to server
-3. ✅ Create a job from mobile app
-4. ✅ Job appears on dashboard in real-time
-5. ✅ Complete job and see stats update
+## What to watch for
 
-### Advanced (once basic flow works):
-- Pause/Resume jobs
-- Work offline and sync later
-- Multiple devices syncing
-- History view
-
----
+- **Duplicate stock numbers**: a second active job with the same stock number is
+  rejected server-side (one-active-job-per-stock). It stays local and is not
+  retried forever — expect it to surface, not silently vanish.
+- **Cross-device users**: detailer PINs are currently per-device; a user created
+  on one tablet won't exist on another until server-side identity (migration 003)
+  is wired.
 
 ## Troubleshooting
 
-### "Can't connect to server" on mobile
-- Check phone and PC are on **same WiFi**
-- Verify IP in `src/config/api.js` matches: **192.168.4.27**
-- Try opening `http://192.168.4.93:3000` in phone's browser
-- Check Windows Firewall isn't blocking port 3000
-
-### Dashboard shows nothing
-- Refresh the page
-- Check server terminal for errors
-- Try the curl commands above to add test data
-
-### Mobile app crashes
-- Run: `npx expo start --clear`
-- Make sure you're using Expo Go app, not regular web browser
-
----
-
-## Current Status
-
-**Server**: ✅ Running on port 3000
-**Database**: ✅ SQLite file (shinetime-detail-tracker.db)
-**Dashboard**: ✅ Accessible at 192.168.4.93:3000
-**Mobile App**: ⏳ Ready to start (npm start)
-
-**Next**: Test creating jobs and see them sync!
+- **"Supabase env vars missing"** — add `.env`, then `npx expo start -c`.
+- **No data after sign-in** — the account has no active dealership membership, or
+  RLS migrations aren't applied to the project.
+- **OCR errors** — the `ocr-vehicle` function isn't deployed or `GEMINI_API_KEY`
+  isn't set as a function secret.
+- **App crashes / stale bundle** — `npx expo start --clear`.

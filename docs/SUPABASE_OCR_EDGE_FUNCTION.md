@@ -14,7 +14,8 @@ Run from repo root:
 supabase login
 supabase link --project-ref oktqajirertyifyfixfa
 supabase secrets set GEMINI_API_KEY=YOUR_GEMINI_KEY
-supabase functions deploy ocr-vehicle --no-verify-jwt=false
+# JWT verification stays ON for this function (it requires a signed-in user):
+supabase functions deploy ocr-vehicle
 ```
 
 ## Local Test (Optional)
@@ -37,5 +38,6 @@ npx expo start --tunnel -c
 ```
 
 ## Notes
-- `server/.env` OCR key is no longer used by mobile OCR once this function is deployed.
+- The old local server has been removed; mobile OCR runs entirely through this function.
 - Keep `GEMINI_API_KEY` only in Supabase function secrets (server-side), not in app env.
+- The function also caps image size and validates the mime type before calling Gemini.

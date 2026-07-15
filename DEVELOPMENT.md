@@ -1,310 +1,103 @@
-# Shinetime - Development Guide
+# Shinetime — Development Guide
 
-## Simplified Architecture
+## Architecture
 
-**Local network only. No Firebase, no authentication, no cloud.**
+Cloud-backed via **Supabase**. No local server, tunnel, or LAN setup.
 
-- Mobile phones store data locally
-- Sync to local server when on WiFi
-- Manager views dashboard on their PC
-- Everything runs at the dealership
-
----
+- The Expo app reads/writes Supabase directly (`src/lib/supabase.js`).
+- Jobs are cached in AsyncStorage and synced in the background (`src/services/storage.js`).
+- Tenant isolation (per dealership) is enforced by Postgres **Row-Level Security**,
+  not by client code — the anon key is public, so RLS is the real boundary.
+- OCR and any other privileged work run in **Edge Functions**, never in the app.
 
 ## Quick Start
 
-### Manager's PC Setup (5 minutes)
-
-1. **Install Node.js** - Download from nodejs.org
-2. **Open terminal** in the `server` folder
-3. **Run commands:**
-   ```bash
-   npm install
-   npm start
+1. Install Node 20+ and the Expo Go app.
+2. Add repo-root `.env`:
+   ```env
+   EXPO_PUBLIC_SUPABASE_URL=https://YOUR-ref.supabase.co
+   EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
    ```
-4. **Note your IP address** (server will display it)
-5. **Open browser** to `http://192.168.4.93:3000`
+3. `npm install && npm start`, then scan the QR code.
 
-### Mobile App Setup (10 minutes)
+For a fresh Supabase project: apply `supabase/migrations/*.sql`, deploy the
+functions in `supabase/functions/`, set the `GEMINI_API_KEY` secret, and create a
+dealership + membership.
 
-1. **Install Expo Go** app on your phone (App Store/Play Store)
-2. **Open terminal** in project root
-3. **Run commands:**
-   ```bash
-   npm install
-   npm start
-   ```
-4. **Scan QR code** with Expo Go app
-5. **Update API config** - Edit `src/config/api.js` with server IP
-
----
-
-## Development Milestones
-
-### ✅ MILESTONE 1: Basic Setup (DONE)
-- [x] Project initialized
-- [x] Server created with SQLite database
-- [x] Manager dashboard HTML created
-- [x] Mobile app structure created
-- [x] Navigation setup
-- [x] Storage service created
-
-### 🔄 MILESTONE 2: Core Job Flow (IN PROGRESS)
-
-**Goal**: Detailers can start and complete jobs
-
-**Tasks:**
-1. Connect NewJobScreen to storage service
-2. Create job when "Begin Detailing" pressed
-3. Show active job on HomeScreen
-4. Add timer display (counts up)
-5. Add "Complete Job" button
-6. Save completed job to storage
-7. Test sync to server
-
-**Files to modify:**
-- `src/screens/HomeScreen.js` - Load and display active jobs
-- `src/screens/NewJobScreen.js` - Connect form to createJob()
-- Create `src/components/ActiveJobCard.js` - Display job with timer
-
-**Complete when:**
-- Can start a job from HomeScreen
-- Timer shows elapsed time
-- Can complete job
-- Job appears in History
-- Job syncs to server
-
----
-
-### MILESTONE 3: Pause/Resume Timer
-
-**Goal**: Detailers can pause and resume jobs
-
-**Tasks:**
-1. Add Pause button to ActiveJobCard
-2. Connect to pauseJob() function
-3. Add Resume button (shows when paused)
-4. Visual indication when paused
-5. Time calculation excludes pause time
-6. Test multiple pause/resume cycles
-
-**Files to modify:**
-- `src/components/ActiveJobCard.js` - Add pause/resume buttons
-
-**Complete when:**
-- Can pause active job
-- Can resume paused job
-- Timer stops when paused
-- Final time excludes pause duration
-
----
-
-### MILESTONE 4: Barcode Scanning
-
-**Goal**: Scan VINs instead of typing
-
-**Tasks:**
-1. Install expo-barcode-scanner
-2. Request camera permissions
-3. Create BarcodeScannerScreen
-4. Add "Scan VIN" button to NewJobScreen
-5. Parse scanned data and auto-fill VIN field
-6. Handle scan errors
-
-**Files to create:**
-- `src/screens/BarcodeScannerScreen.js`
-
-**Files to modify:**
-- `src/screens/NewJobScreen.js` - Add scan button
-- `src/navigation/AppNavigator.js` - Add scanner route
-
-**Complete when:**
-- Can scan VIN barcode
-- VIN auto-fills in form
-- Manual entry still works
-
----
-
-### MILESTONE 5: Polish & Testing
-
-**Goal**: Make it production-ready
-
-**Tasks:**
-1. Add loading states
-2. Add error handling
-3. Improve styling
-4. Add app icon
-5. Test all flows end-to-end
-6. Test offline mode
-7. Test sync after offline work
-8. User testing with 2-3 detailers
-
-**Complete when:**
-- No crashes
-- Works offline
-- Looks professional
-- Detailers can use it easily
-
----
-
-## File Structure Reference
+## File Structure
 
 ```
-Shinetime/
-│
-├── App.js                          # Main app entry
-│
-├── src/
-│   ├── config/
-│   │   └── api.js                 # Server IP configuration
-│   │
-│   ├── services/
-│   │   └── storage.js             # All data operations
-│   │
-│   ├── navigation/
-│   │   └── AppNavigator.js        # Screen routing
-│   │
-│   ├── screens/
-│   │   ├── HomeScreen.js          # Dashboard
-│   │   ├── NewJobScreen.js        # Start new job
-│   │   └── HistoryScreen.js       # Past jobs
-│   │
-│   └── components/
-│       └── ActiveJobCard.js       # (Create this) Job timer card
-│
-└── server/
-    ├── server.js                   # API + Database
-   ├── shinetime-detail-tracker.db # SQLite database (auto-created)
-    └── public/
-        └── index.html             # Manager dashboard
+App.js                          # Auth-gated entry (session → dealership → role → PIN)
+src/
+├── lib/supabase.js             # Supabase client (AsyncStorage-backed session)
+├── context/AuthContext.js      # Session, profile, memberships, active dealership/role
+├── services/
+│   ├── storage.js              # Jobs CRUD + Supabase sync + pending-write queue
+│   ├── ocr.js                  # Calls the ocr-vehicle Edge Function
+│   └── timeMath.js             # Pure duration helpers (unit-tested)
+├── navigation/AppNavigator.js  # Home / NewJob / InProgress / History / JobDetail
+└── screens/                    # incl. onboarding drafts (CreateDealership, JoinByCode,
+                                # ManageInviteCodes) — not yet wired into AppNavigator
+supabase/
+├── migrations/                 # 001 foundation, 002 storage, 003 hardening (draft),
+│                               # 004 onboarding (draft)
+└── functions/ocr-vehicle, manager-dashboard
+__tests__/                      # node --test suites
 ```
 
----
+## Data Flow
 
-## Key Functions Reference
+- **Auth**: `AuthContext` restores the session, ensures a `profiles` row, loads
+  `dealership_memberships`, and drives the entry gate in `App.js`.
+- **Jobs**: created locally first (`createJob`), then synced. All local
+  read-modify-writes go through a mutex (`mutateLocalJobs`) so concurrent actions
+  and background syncs can't clobber each other. Failed writes queue in
+  `@detailtracker_pending_jobs` and replay on the next sync.
+- **Photos**: uploaded to the private `job-photos` bucket; the DB row is written
+  first, then a short-lived signed URL is minted at read time.
+- **OCR**: `scanVehicleFromImage` → `supabase.functions.invoke('ocr-vehicle')`.
 
-### Storage Service (`src/services/storage.js`)
+## Key Functions (`src/services/storage.js`)
 
 ```javascript
-// Create new job
-await createJob({ vin, stockNumber, make, model, year, color })
-
-// Get active jobs
-await getActiveJobs()
-
-// Pause job
-await pauseJob(jobId)
-
-// Resume job
+await createJob({ stockNumber, make, model, year, color })
+await getActiveJobs()      // syncs, returns in_progress
+await pauseJob(jobId, note)
 await resumeJob(jobId)
-
-// Complete job
 await completeJob(jobId)
-
-// Get completed jobs
-await getCompletedJobs()
-
-// Sync to server
-await syncAllJobs()
+await addJobNote(jobId, text)
+await addJobPhoto(jobId, { base64, mimeType, note })
+await getAllJobs()         // full history (syncs first)
+await getOverallStats()
 ```
 
----
+Duration math lives in `src/services/timeMath.js` (clamps negatives to guard
+against device clock skew) and is unit-tested — run `npm test`.
 
-## API Endpoints
+## Backend Notes
 
-**Base URL**: `http://YOUR-PC-IP:3000/api`
+- Migrations `003` (server-side PIN identity + RLS tightening) and `004`
+  (self-serve onboarding: invite codes + RPCs) are **drafted but not applied**.
+  See `docs/PHASE1_HARDENING_NOTES.md` and `docs/PHASE2_ONBOARDING_NOTES.md`.
+- The current detailer-PIN flow (`AuthContext.completeDealershipUserAccess`) is
+  per-device only; migration `003` moves it server-side. Wiring is a follow-up.
 
-- `GET /api/health` - Check if server is running
-- `GET /api/jobs` - Get all jobs
-- `POST /api/jobs` - Create/update single job
-- `POST /api/jobs/sync` - Sync multiple jobs
-- `GET /api/stats` - Get statistics
-- `DELETE /api/jobs/:jobId` - Delete job
+## Testing
 
----
+- `npm test` — unit tests (currently time-math).
+- Device smoke test: sign in → start → pause → resume → note → photo → complete,
+  then repeat offline and reconnect to verify sync/merge.
 
-## Testing Checklist
+## Common Issues
 
-### Basic Flow
-- [ ] Start a job with VIN only
-- [ ] Start a job with Stock Number only
-- [ ] Add vehicle details (make/model/year/color)
-- [ ] Complete a job
-- [ ] View completed job in history
-- [ ] Check job appears on manager dashboard
-
-### Pause/Resume
-- [ ] Pause an active job
-- [ ] Resume a paused job
-- [ ] Pause multiple times
-- [ ] Complete while paused
-- [ ] Verify time excludes pauses
-
-### Offline Mode
-- [ ] Turn off WiFi
-- [ ] Start a job
-- [ ] Complete a job
-- [ ] Turn WiFi back on
-- [ ] Verify job syncs to server
-
-### Multi-Device
-- [ ] Start job on Phone 1
-- [ ] Start job on Phone 2
-- [ ] Both appear on dashboard
-- [ ] Complete both jobs
-- [ ] History shows both
-
----
-
-## Common Issues & Solutions
-
-### "Cannot connect to server"
-- Check IP address in `src/config/api.js`
-- Ensure phone and PC on same WiFi
-- Check server is running
-- Try pinging PC from phone
-
-### "Timer not updating"
-- Use `setInterval` in useEffect
-- Clean up interval on unmount
-- Update state every second
-
-### "Data not syncing"
-- Check network connection
-- Check API_BASE_URL is correct
-- Check server logs for errors
-- Verify CORS is enabled on server
-
-### "App crashes when scanning"
-- expo-barcode-scanner needs physical device
-- Request camera permissions
-- Handle permission denied gracefully
-
----
-
-## Next Steps After MVP
-
-### Phase 2 Features
-- Photo documentation (before/after)
-- Detailer profiles
-- Job assignment (manager assigns to detailer)
-- Push notifications
-- Export reports to CSV
-
-### Phase 3 - Multi-Location
-- Add dealershipId to data model
-- Support multiple locations
-- Cloud hosting option
-- Web dashboard for remote management
-
----
+- **"Supabase env vars missing"** — no `.env`; add it and `npx expo start -c`.
+- **Empty data after sign-in** — account has no active membership, or RLS
+  migrations aren't applied.
+- **Timer/UI stale** — screens reload on focus (`useFocusEffect`); pull data via
+  the `storage.js` getters, which sync first.
 
 ## Getting Help
 
-- Expo docs: https://docs.expo.dev
+- Expo: https://docs.expo.dev
 - React Navigation: https://reactnavigation.org
-- SQLite: https://github.com/WiseLibs/better-sqlite3
-
----
-
-**Remember**: Start simple. Get one feature working completely before adding the next. Test on real devices, not just simulators.
+- Supabase: https://supabase.com/docs
