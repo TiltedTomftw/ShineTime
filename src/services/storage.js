@@ -480,35 +480,33 @@ const runSyncFromServer = async () => {
     if (supabaseJobs) {
       const scopeToCurrentDetailer = await shouldScopeJobsToCurrentDetailer();
       const detailerName = await getDetailerName();
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-      const currentUserId = session?.user?.id || null;
-      const roleFilteredJobs = scopeToCurrentDetailer
-        ? supabaseJobs.filter((job) => {
-            const hasServerIdentity = !!(job.assignedDetailerId || job.createdByUserId);
-            if (currentUserId && hasServerIdentity) {
-              // Authoritative id-based scoping. Do NOT fall back to name here:
-              // two detailers can share a display name.
-              return job.assignedDetailerId === currentUserId || job.createdByUserId === currentUserId;
-            }
-            // Legacy jobs without server ids: fall back to name match.
-            return !!detailerName && job.detailerName === detailerName;
-          })
-        : supabaseJobs;
+      // Operational detailers currently share ONE Supabase account, so the auth
+      // user id identifies the shared account, not the person. Scope a detailer's
+      // view by their operational name — otherwise a brand-new detailer sees
+      // every job on the account. (Server-side per-user identity, migration 003,
+      // will make id-based scoping correct and replace this.)
+      const inCurrentScope = (job) => {
+        if (!scopeToCurrentDetailer) return true;
+        if (!detailerName) return false;
+        return job.detailerName === detailerName;
+      };
 
-      // Supabase is authoritative for this tenant/role scope, but merge in any
-      // local jobs newer than (or missing from) the remote set so an unsynced
-      // offline edit is never overwritten. Done under the write lock so a
-      // concurrent user mutation is not lost.
+      const roleFilteredJobs = supabaseJobs.filter(inCurrentScope);
+
+      // Merge remote with local under the write lock so an unsynced offline edit
+      // is never overwritten and concurrent mutations aren't lost. The device
+      // cache may hold jobs outside the current scope (other detailers who used
+      // this device); we filter the RETURNED view so callers only ever see the
+      // current detailer's jobs.
       const merged = await withJobsLock(async () => {
         const localJobs = await getLocalJobs();
         const next = mergeJobsPreferLocalIfNewer(localJobs, roleFilteredJobs);
         await saveLocalJobs(next);
         return next;
       });
-      console.log(`Synced ${roleFilteredJobs.length} remote jobs; ${merged.length} after local merge`);
-      return merged;
+      const scopedView = merged.filter(inCurrentScope);
+      console.log(`Synced ${roleFilteredJobs.length} in-scope remote jobs; returning ${scopedView.length}`);
+      return scopedView;
     }
   } catch (error) {
     console.log('Could not sync from Supabase:', error.message);
