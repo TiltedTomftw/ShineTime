@@ -2,10 +2,12 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, Image, Platform, FlatList, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { getJobById, pauseJob, resumeJob, completeJob, addJobNote, addJobPhoto } from '../services/storage';
-import config from '../config/api';
 import { useFocusEffect } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
 
 export default function JobDetailScreen({ route, navigation }) {
+  const { activeOperationalRole } = useAuth();
+  const isManager = (activeOperationalRole || '').toLowerCase() === 'manager';
   const { jobId } = route.params;
   const [job, setJob] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
@@ -17,7 +19,7 @@ export default function JobDetailScreen({ route, navigation }) {
   const [showPhotoModal, setShowPhotoModal] = React.useState(false);
   const [activePhotoIndex, setActivePhotoIndex] = React.useState(0);
 
-  const photoUrls = (job?.photos || []).map(photo => `${config.ASSET_BASE_URL}${photo.url}`);
+  const photoUrls = (job?.photos || []).map(photo => photo.url);
 
   const loadJob = async () => {
     const jobData = await getJobById(jobId);
@@ -31,6 +33,10 @@ export default function JobDetailScreen({ route, navigation }) {
   );
 
   const handlePause = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot pause jobs in this view.');
+      return;
+    }
     if (Platform.OS === 'ios') {
       Alert.prompt(
         'Pause Job',
@@ -55,6 +61,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const handlePauseWithNote = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot pause jobs in this view.');
+      return;
+    }
     setLoading(true);
     try {
       await pauseJob(jobId, pauseNoteText || '');
@@ -68,6 +78,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const handleResume = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot resume jobs in this view.');
+      return;
+    }
     setLoading(true);
     try {
       await resumeJob(jobId);
@@ -80,6 +94,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const handleComplete = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot complete jobs in this view.');
+      return;
+    }
     console.log('Complete button clicked');
     setLoading(true);
     try {
@@ -97,6 +115,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const handleAddNote = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot add notes in this view.');
+      return;
+    }
     if (!noteText.trim()) {
       Alert.alert('Note Required', 'Please enter a note.');
       return;
@@ -113,6 +135,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const handleAddPhoto = async () => {
+    if (isManager) {
+      Alert.alert('Read Only', 'Managers cannot add photos in this view.');
+      return;
+    }
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
@@ -237,7 +263,7 @@ export default function JobDetailScreen({ route, navigation }) {
         )}
       </View>
 
-      {!isCompleted && (
+      {!isCompleted && !isManager && (
         <View style={styles.actions}>
           {loading ? (
             <ActivityIndicator size="large" color="#667eea" />
@@ -263,7 +289,7 @@ export default function JobDetailScreen({ route, navigation }) {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Notes</Text>
-        {!isCompleted && (
+        {!isCompleted && !isManager && (
           <View style={styles.noteInputRow}>
             <TextInput
               style={styles.noteInput}
@@ -297,7 +323,7 @@ export default function JobDetailScreen({ route, navigation }) {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Photos</Text>
-        {!isCompleted && (
+        {!isCompleted && !isManager && (
           <TouchableOpacity style={styles.photoButton} onPress={handleAddPhoto} disabled={photoLoading}>
             {photoLoading ? (
               <ActivityIndicator color="#fff" />
@@ -313,10 +339,10 @@ export default function JobDetailScreen({ route, navigation }) {
               return (
                 <TouchableOpacity
                   key={`${photo.timestamp}-${index}`}
-                  onPress={() => handleOpenPhoto(`${config.ASSET_BASE_URL}${photo.url}`, index)}
+                  onPress={() => handleOpenPhoto(photo.url, index)}
                 >
                   <Image
-                    source={{ uri: `${config.ASSET_BASE_URL}${thumbUrl}` }}
+                    source={{ uri: thumbUrl }}
                     style={styles.photoThumb}
                   />
                 </TouchableOpacity>

@@ -5,14 +5,20 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "migrate:supabase": "node scripts/migrate-sqlite-to-supabase.js",
+    "supabase:create-test-user": "node scripts/create-supabase-test-user.js",
+    "supabase:bootstrap": "node scripts/bootstrap-supabase.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.102.1",
     "better-sqlite3": "^12.2.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.18.2",
-    "sharp": "^0.33.5"
+    "pg": "^8.16.3",
+    "sharp": "^0.33.5",
+    "shinetime-detail-tracker": "file:.."
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

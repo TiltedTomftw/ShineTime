@@ -36,6 +36,8 @@ yarn-error.*
 server/.env
 
 # local databases and logs
+dist-smoke*/
+expo-*.log
 *.db
 *.db-shm
 *.db-wal

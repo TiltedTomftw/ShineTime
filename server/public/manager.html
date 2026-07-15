@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shinetime Manager Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --brand: #667eea;
+      --brand-dark: #4f5bd5;
+      --accent: #f59e0b;
+      --success: #10b981;
+      --danger: #ef4444;
+      --bg: #eef1f7;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 20px 45px rgba(15, 23, 42, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: 'Work Sans', system-ui, -apple-system, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top, rgba(102, 126, 234, 0.18), transparent 40%),
+        radial-gradient(circle at 20% 20%, rgba(245, 158, 11, 0.12), transparent 35%),
+        #eef1f7;
+    }
+
+    .app {
+      max-width: 1280px;
+      margin: 0 auto;
+      padding: 28px 24px 60px;
+    }
+
+    .hero {
+      position: relative;
+      background: #ffffff;
+      border-radius: 24px;
+      padding: 28px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      border: 1px solid rgba(102, 126, 234, 0.18);
+    }
+
+    .hero::after {
+      content: '';
+      position: absolute;
+      right: -140px;
+      top: -120px;
+      width: 320px;
+      height: 320px;
+      background: radial-gradient(circle, rgba(102, 126, 234, 0.25), transparent 70%);
+      opacity: 0.45;
+      pointer-events: none;
+    }
+
+    .hero-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+
+    .hero-title {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+
+    .hero-subtitle {
+      color: var(--muted);
+      margin-top: 6px;
+      font-size: 15px;
+    }
+
+
+    .btn {
+      border: none;
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Work Sans', sans-serif;
+      letter-spacing: 0.2px;
+    }
+
+    .btn.primary {
+      background: var(--brand);
+      color: white;
+      box-shadow: 0 10px 20px rgba(102, 126, 234, 0.25);
+    }
+
+    .btn.ghost {
+      background: white;
+      color: var(--brand);
+      border: 1px solid rgba(102, 126, 234, 0.3);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .stat-card {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      box-shadow: 0 10px 20px rgba(15, 23, 42, 0.05);
+    }
+
+    .stat-label {
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 1.4px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .stat-value {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 10px;
+    }
+
+    .stat-meta {
+      margin-top: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .insights {
+      margin-top: 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+    }
+
+    .insight-card {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      border: 1px solid var(--border);
+    }
+
+    .insight-title {
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+
+    .insight-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: grid;
+      gap: 10px;
+    }
+
+    .insight-list li {
+      display: flex;
+      justify-content: space-between;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .panel {
+      background: white;
+      border-radius: 20px;
+      padding: 22px;
+      margin-top: 22px;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }
+
+    .filters {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .field label {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 1px;
+      font-weight: 600;
+    }
+
+    .field input,
+    .field select {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+      font-family: 'Work Sans', sans-serif;
+    }
+
+    .filters-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+
+    .temp-badge {
+      font-size: 11px;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+      font-weight: 700;
+    }
+
+    .jobs-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+    }
+
+    .jobs-header h2 {
+      margin: 0;
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 22px;
+    }
+
+    .job-count {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .view-toggle {
+      display: flex;
+      gap: 8px;
+    }
+
+    .toggle-btn {
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--muted);
+    }
+
+    .toggle-btn.active {
+      background: var(--brand);
+      color: white;
+      border-color: var(--brand);
+    }
+
+    .jobs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 16px;
+    }
+
+    .job-card {
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      padding: 18px;
+      background: white;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.06);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      cursor: pointer;
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+
+    .job-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 18px 30px rgba(15, 23, 42, 0.12);
+    }
+
+    .job-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .job-title {
+      font-weight: 700;
+      font-size: 16px;
+      margin: 0 0 4px;
+    }
+
+    .job-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .status-pill {
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: white;
+      background: var(--brand);
+    }
+
+    .status-pill.paused { background: var(--accent); }
+    .status-pill.completed { background: var(--success); }
+
+    .job-meta {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .job-meta span {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .job-tags {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .tag {
+      background: #eef2ff;
+      color: #4338ca;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 6px 10px;
+      border-radius: 999px;
+    }
+
+    .tag.notes { background: #fff7ed; color: #b45309; }
+    .tag.photos { background: #ecfdf3; color: #047857; }
+
+    .job-preview {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .preview-image {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      object-fit: cover;
+      border: 1px solid var(--border);
+      background: #f8fafc;
+    }
+
+    .preview-note {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .compact-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .compact-table th,
+    .compact-table td {
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+
+    .compact-table th {
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--muted);
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(17, 24, 39, 0.6);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .modal.show { display: flex; }
+
+    .modal-content {
+      background: white;
+      border-radius: 20px;
+      padding: 26px;
+      max-width: 720px;
+      width: 100%;
+      max-height: 85vh;
+      overflow-y: auto;
+      position: relative;
+      box-shadow: var(--shadow);
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      border: none;
+      background: #f3f4f6;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      cursor: pointer;
+      font-size: 18px;
+    }
+
+    .modal-section {
+      margin-top: 18px;
+    }
+
+    .modal-section h3 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .modal-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+    }
+
+    .modal-card {
+      background: #f8fafc;
+      border-radius: 14px;
+      padding: 12px;
+      border: 1px solid var(--border);
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+
+    .timeline-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: white;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 10px;
+    }
+
+    .photo-grid img {
+      width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      object-fit: cover;
+    }
+
+    .photo-modal-content {
+      background: white;
+      border-radius: 16px;
+      padding: 16px;
+      max-width: 720px;
+      width: 100%;
+      text-align: center;
+    }
+
+    .photo-modal-content img {
+      max-width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
+
+    .photo-note {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @media (max-width: 768px) {
+      .hero-title { font-size: 26px; }
+      .stats-grid { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+      .jobs-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <section class="hero">
+      <div class="hero-header">
+        <div>
+          <div class="hero-title">Shinetime Manager Dashboard</div>
+        </div>
+        <div class="hero-actions">
+          <span class="temp-badge">Temporary</span>
+          <button class="btn" style="background: var(--danger); color: white;" onclick="wipeDatabase()">Wipe Database</button>
+        </div>
+      </div>
+
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Completed</div>
+          <div class="stat-value" id="statCompleted">0</div>
+          <div class="stat-meta" id="statCompletedMeta">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Active</div>
+          <div class="stat-value" id="statActive">0</div>
+          <div class="stat-meta" id="statActiveMeta">In progress + paused</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Paused</div>
+          <div class="stat-value" id="statPaused">0</div>
+          <div class="stat-meta" id="statPausedMeta">Needs attention</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Average Time</div>
+          <div class="stat-value" id="statAvg">--</div>
+          <div class="stat-meta" id="statAvgMeta">Across completed</div>
+        </div>
+      </div>
+
+      <div class="insights">
+        <div class="insight-card">
+          <div class="insight-title">Top Detailers</div>
+          <ul class="insight-list" id="topDetailers"></ul>
+        </div>
+        <div class="insight-card">
+          <div class="insight-title">Longest Active Jobs</div>
+          <ul class="insight-list" id="slowJobs"></ul>
+        </div>
+        <div class="insight-card">
+          <div class="insight-title">Coverage</div>
+          <ul class="insight-list">
+            <li><span>Notes logged</span><strong id="notesCount">0</strong></li>
+            <li><span>Photos captured</span><strong id="photosCount">0</strong></li>
+            <li><span>Custody events</span><strong id="custodyCount">0</strong></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="filters">
+        <div class="field">
+          <label for="statusFilter">Status</label>
+          <select id="statusFilter" onchange="loadDashboard()">
+            <option value="">All Status</option>
+            <option value="in_progress">In Progress</option>
+            <option value="paused">Paused</option>
+            <option value="completed">Completed</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dateFilter">Date Range</label>
+          <select id="dateFilter" onchange="loadDashboard()">
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+            <option value="all" selected>All Time</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="detailerFilter">Detailer</label>
+          <select id="detailerFilter" onchange="loadDashboard()">
+            <option value="">All Detailers</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="searchFilter">Search</label>
+          <input type="text" id="searchFilter" placeholder="Stock, make, model, note..." oninput="loadDashboard()">
+        </div>
+        <div class="filters-actions">
+          <button class="btn ghost" onclick="clearFilters()">Clear Filters</button>
+          <button class="btn primary" onclick="loadDashboard()">Refresh</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="jobs-header">
+        <div>
+          <h2>Jobs Overview</h2>
+          <div class="job-count" id="jobCount">0 jobs</div>
+        </div>
+        <div class="view-toggle">
+          <button class="toggle-btn active" id="cardViewBtn" onclick="setView('cards')">Cards</button>
+          <button class="toggle-btn" id="tableViewBtn" onclick="setView('table')">Compact Table</button>
+        </div>
+      </div>
+      <div id="jobsContainer"></div>
+    </section>
+  </div>
+
+  <div id="jobModal" class="modal" onclick="closeModal(event, 'jobModal')">
+    <div class="modal-content" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal(null, 'jobModal')">&times;</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <div id="photoModal" class="modal" onclick="closeModal(event, 'photoModal')">
+    <div class="photo-modal-content" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal(null, 'photoModal')">&times;</button>
+      <img id="photoModalImage" src="" alt="Job photo">
+      <div class="photo-note" id="photoModalNote"></div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    let currentView = 'cards';
+    let supabaseClient = null;
+    let dashboardRefreshTimer = null;
+
+    // Bucket-hosted dashboard config:
+    // - dealership UUID from ?d=<uuid>
+    // - optional title from ?name=Dealer+Name
+    // - anon key can be hardcoded (publishable) or set once via prompt and cached in localStorage
+    const urlParams = new URLSearchParams(window.location.search);
+    const queryDealershipId = (urlParams.get('d') || '').trim();
+    const queryDealershipName = (urlParams.get('name') || '').trim();
+
+    const DASHBOARD_CONFIG = {
+      dealershipName: queryDealershipName || localStorage.getItem('manager_dashboard_name') || 'Shinetime Manager Dashboard',
+      dealershipId: queryDealershipId || localStorage.getItem('manager_dashboard_dealership_id') || '',
+      supabaseUrl: 'https://oktqajirertyifyfixfa.supabase.co',
+      supabaseAnonKey: localStorage.getItem('manager_dashboard_anon_key') || 'sb_publishable_lLIClIUyRA0J6dOHknPLLg_h1L84IPt',
+    };
+
+    if (queryDealershipId) {
+      localStorage.setItem('manager_dashboard_dealership_id', queryDealershipId);
+    }
+    if (queryDealershipName) {
+      localStorage.setItem('manager_dashboard_name', queryDealershipName);
+    }
+
+    function formatTime(ms) {
+      if (!ms) return '--';
+      const minutes = Math.floor(ms / 60000);
+      const hours = Math.floor(minutes / 60);
+      if (hours > 0) {
+        const remainingMinutes = minutes % 60;
+        return `${hours}h ${remainingMinutes}m`;
+      }
+      return `${minutes}m`;
+    }
+
+    function formatDateTime(timestamp) {
+      return new Date(timestamp).toLocaleString();
+    }
+
+    function parseTimestamp(value) {
+      if (!value) return null;
+      const time = new Date(value).getTime();
+      return Number.isFinite(time) ? time : null;
+    }
+
+    function mapSupabaseJobToLegacyShape(row) {
+      const payload = row && typeof row.payload === 'object' && row.payload !== null ? row.payload : {};
+      const createdAtMs = parseTimestamp(row.created_at);
+      const updatedAtMs = parseTimestamp(row.client_updated_at) || parseTimestamp(row.updated_at);
+      const startedAtMs = parseTimestamp(row.started_at);
+      const endedAtMs = parseTimestamp(row.ended_at);
+
+      const detailerFromList =
+        Array.isArray(payload.detailers) && payload.detailers.length > 0
+          ? payload.detailers[payload.detailers.length - 1]
+          : null;
+
+      return {
+        ...payload,
+        jobId: payload.jobId || row.legacy_job_id || row.id,
+        status: payload.status || row.status || 'queued',
+        deviceId: payload.deviceId || row.device_id || null,
+        stockNumber: payload.stockNumber || row.stock_number || null,
+        vin: payload.vin || row.vin || null,
+        make: payload.make || row.make || null,
+        model: payload.model || row.model || null,
+        year: payload.year || row.year || null,
+        color: payload.color || row.color || null,
+        detailerName: payload.detailerName || detailerFromList || 'Unknown',
+        startTime: payload.startTime || startedAtMs || createdAtMs || Date.now(),
+        endTime: payload.endTime || endedAtMs || null,
+        createdAt: payload.createdAt || createdAtMs || Date.now(),
+        updatedAt: payload.updatedAt || updatedAtMs || Date.now(),
+        totalPauseTime: Number(payload.totalPauseTime || row.total_pause_ms || 0),
+        totalActiveTime: Number(payload.totalActiveTime || row.total_active_ms || 0),
+        pauseEvents: Array.isArray(payload.pauseEvents) ? payload.pauseEvents : [],
+        notes: Array.isArray(payload.notes) ? payload.notes : [],
+        custodyEvents: Array.isArray(payload.custodyEvents) ? payload.custodyEvents : [],
+        detailers: Array.isArray(payload.detailers) ? payload.detailers : [],
+        photos: Array.isArray(payload.photos) ? payload.photos : [],
+      };
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function getDateRange() {
+      const filter = document.getElementById('dateFilter').value;
+      const now = Date.now();
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      switch (filter) {
+        case 'today':
+          return { startDate: today.getTime(), endDate: now };
+        case 'week':
+          const weekAgo = new Date(today);
+          weekAgo.setDate(weekAgo.getDate() - 7);
+          return { startDate: weekAgo.getTime(), endDate: now };
+        case 'month':
+          const monthAgo = new Date(today);
+          monthAgo.setMonth(monthAgo.getMonth() - 1);
+          return { startDate: monthAgo.getTime(), endDate: now };
+        default:
+          return {};
+      }
+    }
+
+    function clearFilters() {
+      document.getElementById('statusFilter').value = '';
+      document.getElementById('dateFilter').value = 'all';
+      document.getElementById('detailerFilter').value = '';
+      document.getElementById('searchFilter').value = '';
+      loadDashboard();
+    }
+
+
+    async function wipeDatabase() {
+      const confirmed = confirm('This will delete ALL jobs. Continue?');
+      if (!confirmed) return;
+      try {
+        await ensureSignedIn();
+        const { error } = await supabaseClient
+          .from('jobs')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('dealership_id', DASHBOARD_CONFIG.dealershipId)
+          .is('deleted_at', null);
+        if (error) throw error;
+        alert('All jobs soft-deleted for this dealership.');
+        loadDashboard();
+      } catch (error) {
+        alert('Failed to wipe database: ' + error.message);
+      }
+    }
+
+    async function ensureSignedIn() {
+      if (!supabaseClient) throw new Error('Supabase client not initialized');
+
+      const { data: { session }, error: sessionError } = await supabaseClient.auth.getSession();
+      if (sessionError) throw sessionError;
+      if (session?.user) return session.user;
+
+      const email = prompt('Manager login email:');
+      if (!email) throw new Error('Sign-in cancelled');
+      const password = prompt('Manager password:');
+      if (!password) throw new Error('Sign-in cancelled');
+
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      if (!data?.user) throw new Error('Sign-in failed');
+      return data.user;
+    }
+
+    async function fetchSupabaseJobs(statusFilter, dateRange) {
+      await ensureSignedIn();
+      let query = supabaseClient
+        .from('jobs')
+        .select(
+          [
+            'id',
+            'legacy_job_id',
+            'status',
+            'device_id',
+            'stock_number',
+            'vin',
+            'make',
+            'model',
+            'year',
+            'color',
+            'started_at',
+            'ended_at',
+            'total_pause_ms',
+            'total_active_ms',
+            'client_updated_at',
+            'created_at',
+            'updated_at',
+            'payload',
+          ].join(',')
+        )
+        .eq('dealership_id', DASHBOARD_CONFIG.dealershipId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false });
+
+      if (statusFilter) query = query.eq('status', statusFilter);
+      if (dateRange.startDate) query = query.gte('created_at', new Date(dateRange.startDate).toISOString());
+      if (dateRange.endDate) query = query.lte('created_at', new Date(dateRange.endDate).toISOString());
+
+      const { data, error } = await query;
+      if (error) throw error;
+      return (data || []).map(mapSupabaseJobToLegacyShape);
+    }
+
+    function setView(view) {
+      currentView = view;
+      document.getElementById('cardViewBtn').classList.toggle('active', view === 'cards');
+      document.getElementById('tableViewBtn').classList.toggle('active', view === 'table');
+      loadDashboard();
+    }
+
+    function getElapsedTime(job) {
+      const now = Date.now();
+      const lastPause = job.pauseEvents && job.pauseEvents.length > 0
+        ? job.pauseEvents[job.pauseEvents.length - 1]
+        : null;
+      const currentPauseDuration = job.status === 'paused' && lastPause && lastPause.type === 'pause'
+        ? now - lastPause.timestamp
+        : 0;
+      return now - job.startTime - (job.totalPauseTime || 0) - currentPauseDuration;
+    }
+
+    function updateDetailerFilter(jobs) {
+      const detailers = new Set();
+      jobs.forEach(job => {
+        if (Array.isArray(job.detailers)) {
+          job.detailers.forEach(name => name && detailers.add(name));
+        }
+        if (job.detailerName) detailers.add(job.detailerName);
+      });
+
+      const select = document.getElementById('detailerFilter');
+      const current = select.value;
+      const options = ['<option value="">All Detailers</option>'];
+      Array.from(detailers).sort().forEach(name => {
+        options.push(`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`);
+      });
+      select.innerHTML = options.join('');
+      if ([...detailers].includes(current)) {
+        select.value = current;
+      }
+    }
+
+    function computeInsights(jobs) {
+      const completed = jobs.filter(j => j.status === 'completed');
+      const active = jobs.filter(j => j.status === 'in_progress' || j.status === 'paused');
+
+      const detailerStats = new Map();
+      completed.forEach(job => {
+        const name = job.detailerName || 'Unknown';
+        const entry = detailerStats.get(name) || { count: 0, totalTime: 0 };
+        entry.count += 1;
+        entry.totalTime += job.totalActiveTime || 0;
+        detailerStats.set(name, entry);
+      });
+
+      const topDetailers = Array.from(detailerStats.entries())
+        .sort((a, b) => b[1].count - a[1].count)
+        .slice(0, 4);
+
+      const topList = document.getElementById('topDetailers');
+      topList.innerHTML = topDetailers.length
+        ? topDetailers.map(([name, data]) => `<li><span>${escapeHtml(name)}</span><strong>${data.count} jobs</strong></li>`).join('')
+        : '<li><span>No completed jobs yet</span><strong>--</strong></li>';
+
+      const slowJobs = active
+        .map(job => ({ job, duration: getElapsedTime(job) }))
+        .sort((a, b) => b.duration - a.duration)
+        .slice(0, 4);
+
+      const slowList = document.getElementById('slowJobs');
+      slowList.innerHTML = slowJobs.length
+        ? slowJobs.map(({ job, duration }) => `
+            <li><span>${escapeHtml(job.stockNumber || 'No Stock')} • ${escapeHtml(job.make || '')}</span><strong>${formatTime(duration)}</strong></li>
+          `).join('')
+        : '<li><span>No active jobs</span><strong>--</strong></li>';
+
+      const notesCount = jobs.reduce((sum, job) => sum + (job.notes ? job.notes.length : 0), 0);
+      const photosCount = jobs.reduce((sum, job) => sum + (job.photos ? job.photos.length : 0), 0);
+      const custodyCount = jobs.reduce((sum, job) => sum + (job.custodyEvents ? job.custodyEvents.length : 0), 0);
+
+      document.getElementById('notesCount').textContent = notesCount;
+      document.getElementById('photosCount').textContent = photosCount;
+      document.getElementById('custodyCount').textContent = custodyCount;
+    }
+
+    function renderCards(jobs) {
+      if (!jobs.length) {
+        return '<div class="empty-state">No jobs found. Adjust filters or refresh.</div>';
+      }
+
+      return `
+        <div class="jobs-grid">
+          ${jobs.map(job => {
+            const lastNote = job.notes && job.notes.length > 0 ? job.notes[0] : null;
+            const latestPhoto = job.photos && job.photos.length > 0 ? job.photos[0] : null;
+            const latestThumb = latestPhoto && (latestPhoto.thumbUrl || latestPhoto.url);
+            const noteText = lastNote ? escapeHtml(lastNote.text || '') : 'No notes yet';
+            const detailerLabel = job.detailers && job.detailers.length > 1
+              ? job.detailers.map(d => escapeHtml(d)).join(' → ')
+              : escapeHtml(job.detailerName || 'Unknown');
+
+            return `
+              <div class="job-card" onclick='showJobDetails(${JSON.stringify(job).replace(/'/g, "&apos;")})'>
+                <div class="job-top">
+                  <div>
+                    <div class="job-title">${escapeHtml(job.make || '?')} ${escapeHtml(job.model || '?')}</div>
+                    <div class="job-subtitle">Stock ${escapeHtml(job.stockNumber || 'N/A')} • ${escapeHtml(job.year || '----')} ${escapeHtml(job.color || '')}</div>
+                  </div>
+                  <div class="status-pill ${escapeHtml(job.status)}">${escapeHtml(job.status.replace('_', ' '))}</div>
+                </div>
+                <div class="job-meta">
+                  <div>Detailer: <span>${detailerLabel}</span></div>
+                  <div>Started: <span>${formatDateTime(job.startTime)}</span></div>
+                  <div>Active Time: <span>${formatTime(job.status === 'completed' ? job.totalActiveTime : getElapsedTime(job))}</span></div>
+                  <div>Updates: <span>${(job.notes ? job.notes.length : 0)} notes, ${(job.photos ? job.photos.length : 0)} photos</span></div>
+                </div>
+                <div class="job-tags">
+                  <span class="tag">${escapeHtml(job.detailType || 'Standard')}</span>
+                  <span class="tag notes">${job.notes && job.notes.length ? 'Notes ready' : 'No notes'}</span>
+                  <span class="tag photos">${job.photos && job.photos.length ? 'Photos ready' : 'No photos'}</span>
+                </div>
+                <div class="job-preview">
+                  ${latestPhoto ? `<img class="preview-image" src="${latestThumb}" alt="Latest photo">` : '<div class="preview-image"></div>'}
+                  <div class="preview-note">${noteText}</div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function renderTable(jobs) {
+      if (!jobs.length) {
+        return '<div class="empty-state">No jobs found. Adjust filters or refresh.</div>';
+      }
+
+      return `
+        <table class="compact-table">
+          <thead>
+            <tr>
+              <th>Vehicle</th>
+              <th>Stock</th>
+              <th>Status</th>
+              <th>Detailer</th>
+              <th>Time</th>
+              <th>Notes</th>
+              <th>Photos</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${jobs.map(job => `
+              <tr onclick='showJobDetails(${JSON.stringify(job).replace(/'/g, "&apos;")})'>
+                <td>${escapeHtml(job.make || '?')} ${escapeHtml(job.model || '?')}</td>
+                <td>${escapeHtml(job.stockNumber || 'N/A')}</td>
+                <td>${escapeHtml(job.status.replace('_', ' '))}</td>
+                <td>${escapeHtml(job.detailerName || 'Unknown')}</td>
+                <td>${formatTime(job.status === 'completed' ? job.totalActiveTime : getElapsedTime(job))}</td>
+                <td>${job.notes ? job.notes.length : 0}</td>
+                <td>${job.photos ? job.photos.length : 0}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    function showJobDetails(job) {
+      const modalBody = document.getElementById('modalBody');
+
+      const detailersLabel = job.detailers && job.detailers.length > 1
+        ? job.detailers.map(d => escapeHtml(d)).join(' → ')
+        : escapeHtml(job.detailerName || 'Unknown');
+
+      const notes = job.notes || [];
+      const custody = job.custodyEvents || [];
+      const photos = job.photos || [];
+
+      const notesHtml = notes.length
+        ? notes.map(note => `
+            <div class="timeline-item">
+              <strong>${escapeHtml(note.detailerName || 'Unknown')}</strong> • ${formatDateTime(note.timestamp)}<br>
+              ${escapeHtml(note.text || '')}
+            </div>
+          `).join('')
+        : '<div class="timeline-item">No notes yet.</div>';
+
+      const custodyHtml = custody.length
+        ? [...custody].sort((a, b) => b.timestamp - a.timestamp).map(event => `
+            <div class="timeline-item">
+              <strong>${escapeHtml(event.detailerName || 'Unknown')}</strong> • ${formatDateTime(event.timestamp)}<br>
+              ${escapeHtml(event.type || 'unknown')}${event.note ? ` • ${escapeHtml(event.note)}` : ''}
+            </div>
+          `).join('')
+        : '<div class="timeline-item">No custody events yet.</div>';
+
+      const photosHtml = photos.length
+        ? photos.map(photo => {
+            const thumbSrc = photo.thumbUrl || photo.url;
+            return `
+              <img src="${thumbSrc}" alt="Job photo" onclick='showPhoto(${JSON.stringify(photo).replace(/'/g, "&apos;")})'>
+            `;
+          }).join('')
+        : '<div class="timeline-item">No photos yet.</div>';
+
+      modalBody.innerHTML = `
+        <h2>${escapeHtml(job.make || '?')} ${escapeHtml(job.model || '?')}</h2>
+        <div class="modal-grid modal-section">
+          <div class="modal-card"><strong>Stock</strong><br>${escapeHtml(job.stockNumber || 'N/A')}</div>
+          <div class="modal-card"><strong>Year</strong><br>${escapeHtml(job.year || 'N/A')}</div>
+          <div class="modal-card"><strong>Color</strong><br>${escapeHtml(job.color || 'N/A')}</div>
+          <div class="modal-card"><strong>Status</strong><br>${escapeHtml(job.status.replace('_', ' '))}</div>
+          <div class="modal-card"><strong>Detailer</strong><br>${detailersLabel}</div>
+          <div class="modal-card"><strong>Started</strong><br>${formatDateTime(job.startTime)}</div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Time Tracking</h3>
+          <div class="modal-grid">
+            <div class="modal-card"><strong>Active Time</strong><br>${formatTime(job.status === 'completed' ? job.totalActiveTime : getElapsedTime(job))}</div>
+            <div class="modal-card"><strong>Pause Time</strong><br>${formatTime(job.totalPauseTime || 0)}</div>
+            <div class="modal-card"><strong>Pauses</strong><br>${job.pauseEvents ? job.pauseEvents.length : 0}</div>
+          </div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Notes</h3>
+          <div class="timeline">${notesHtml}</div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Chain of Custody</h3>
+          <div class="timeline">${custodyHtml}</div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Photos</h3>
+          <div class="photo-grid">${photosHtml}</div>
+        </div>
+      `;
+
+      document.getElementById('jobModal').classList.add('show');
+    }
+
+    function showPhoto(photo) {
+      const image = document.getElementById('photoModalImage');
+      const note = document.getElementById('photoModalNote');
+      image.src = photo.url;
+      note.textContent = `${photo.detailerName || 'Unknown'} • ${formatDateTime(photo.timestamp)}${photo.note ? ` • ${photo.note}` : ''}`;
+      document.getElementById('photoModal').classList.add('show');
+    }
+
+    function closeModal(event, id) {
+      if (!event || event.target.id === id) {
+        document.getElementById(id).classList.remove('show');
+      }
+    }
+
+    async function loadDashboard() {
+      try {
+        const statusFilter = document.getElementById('statusFilter').value;
+        const searchFilter = document.getElementById('searchFilter').value.trim().toUpperCase();
+        const detailerFilter = document.getElementById('detailerFilter').value;
+        const dateRange = getDateRange();
+
+        let jobs = await fetchSupabaseJobs(statusFilter, dateRange);
+
+        updateDetailerFilter(jobs);
+
+        if (detailerFilter) {
+          jobs = jobs.filter(job => {
+            const detailers = job.detailers || [];
+            return detailers.includes(detailerFilter) || job.detailerName === detailerFilter;
+          });
+        }
+
+        if (searchFilter) {
+          const searchTerms = searchFilter.split(' ').filter(term => term.length > 0);
+          jobs = jobs.filter(job => {
+            const jobText = [
+              job.stockNumber || '',
+              job.make || '',
+              job.model || '',
+              job.color || '',
+              job.year || '',
+              job.detailerName || '',
+              ...(job.notes || []).map(note => note.text || '')
+            ].join(' ').toUpperCase();
+            return searchTerms.every(term => jobText.includes(term));
+          });
+        }
+
+        document.getElementById('jobCount').textContent = `${jobs.length} jobs`;
+
+        const completed = jobs.filter(j => j.status === 'completed');
+        const inProgress = jobs.filter(j => j.status === 'in_progress');
+        const paused = jobs.filter(j => j.status === 'paused');
+        const totalTime = completed.reduce((sum, j) => sum + (j.totalActiveTime || 0), 0);
+        const avgTime = completed.length ? totalTime / completed.length : 0;
+
+        document.getElementById('statCompleted').textContent = completed.length;
+        document.getElementById('statCompletedMeta').textContent = `Total time ${formatTime(totalTime)}`;
+        document.getElementById('statActive').textContent = inProgress.length + paused.length;
+        document.getElementById('statPaused').textContent = paused.length;
+        document.getElementById('statAvg').textContent = formatTime(avgTime);
+
+        computeInsights(jobs);
+
+        const container = document.getElementById('jobsContainer');
+        container.innerHTML = currentView === 'cards' ? renderCards(jobs) : renderTable(jobs);
+      } catch (error) {
+        console.error('Error loading jobs:', error);
+        document.getElementById('jobsContainer').innerHTML = `
+          <div class="empty-state">
+            <h3>Error loading jobs</h3>
+            <p>${error.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeModal(null, 'jobModal');
+        closeModal(null, 'photoModal');
+      }
+    });
+
+    async function initializeDashboardApp() {
+      document.title = DASHBOARD_CONFIG.dealershipName || document.title;
+      const titleNode = document.querySelector('.hero-title');
+      if (titleNode && DASHBOARD_CONFIG.dealershipName) {
+        titleNode.textContent = DASHBOARD_CONFIG.dealershipName;
+      }
+
+      if (!DASHBOARD_CONFIG.dealershipId) {
+        document.getElementById('jobsContainer').innerHTML = `
+          <div class="empty-state">
+            <h3>Missing Dealership</h3>
+            <p>Open this page using ?d=YOUR_DEALERSHIP_UUID</p>
+          </div>
+        `;
+        return;
+      }
+
+      if (!DASHBOARD_CONFIG.supabaseAnonKey) {
+        const anonKey = prompt('Enter Supabase publishable (anon) key for this project:');
+        if (!anonKey) {
+          document.getElementById('jobsContainer').innerHTML = `
+            <div class="empty-state">
+              <h3>Missing Supabase Key</h3>
+              <p>Set a publishable key to continue.</p>
+            </div>
+          `;
+          return;
+        }
+        DASHBOARD_CONFIG.supabaseAnonKey = anonKey.trim();
+        localStorage.setItem('manager_dashboard_anon_key', DASHBOARD_CONFIG.supabaseAnonKey);
+      }
+
+      supabaseClient = window.supabase.createClient(
+        DASHBOARD_CONFIG.supabaseUrl,
+        DASHBOARD_CONFIG.supabaseAnonKey
+      );
+
+      await loadDashboard();
+
+      if (dashboardRefreshTimer) clearInterval(dashboardRefreshTimer);
+      dashboardRefreshTimer = setInterval(() => {
+        loadDashboard();
+      }, 12000);
+    }
+
+    initializeDashboardApp();
+  </script>
+</body>
+</html>

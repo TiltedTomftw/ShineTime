@@ -1,38 +1,118 @@
 import React from 'react';
+import { Text, TouchableOpacity, View, StyleSheet } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import AppNavigator from './src/navigation/AppNavigator';
-import OnboardingScreen from './src/screens/OnboardingScreen';
+import AuthScreen from './src/screens/AuthScreen';
+import DealershipSelectScreen from './src/screens/DealershipSelectScreen';
+import RoleSelectionScreen from './src/screens/RoleSelectionScreen';
+import UserPinScreen from './src/screens/UserPinScreen';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
 
-export default function App() {
-  const [isOnboarded, setIsOnboarded] = React.useState(null);
+function NoAccessScreen({ onSignOut }) {
+  return (
+    <View style={styles.centeredContainer}>
+      <Text style={styles.noAccessTitle}>No Dealership Access</Text>
+      <Text style={styles.noAccessBody}>
+        Your account is signed in but not assigned to an active dealership.
+      </Text>
+      <TouchableOpacity style={styles.signOutButton} onPress={onSignOut}>
+        <Text style={styles.signOutButtonText}>Sign out</Text>
+      </TouchableOpacity>
+    </View>
+  );
+}
 
-  React.useEffect(() => {
-    checkOnboarding();
-  }, []);
+function AppEntry() {
+  const {
+    session,
+    memberships,
+    activeDealership,
+    activeOperationalRole,
+    hasCompletedDetailerSetup,
+    isLoading,
+    signOut,
+    selectActiveDealership,
+    selectOperationalRole,
+  } = useAuth();
 
-  const checkOnboarding = async () => {
-    const name = await AsyncStorage.getItem('@detailtracker_detailer_name');
-    setIsOnboarded(!!name);
-  };
-
-  if (isOnboarded === null) {
+  if (isLoading) {
     return null; // Loading
   }
 
-  if (!isOnboarded) {
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  if (!memberships || memberships.length === 0) {
+    return <NoAccessScreen onSignOut={signOut} />;
+  }
+
+  if (!activeDealership) {
     return (
-      <>
-        <OnboardingScreen onComplete={() => setIsOnboarded(true)} />
-        <StatusBar style="light" />
-      </>
+      <DealershipSelectScreen
+        memberships={memberships}
+        onSelect={selectActiveDealership}
+        onSignOut={signOut}
+      />
     );
   }
 
+  if (!activeOperationalRole) {
+    return (
+      <RoleSelectionScreen
+        onSelectRole={selectOperationalRole}
+        onSignOut={signOut}
+      />
+    );
+  }
+
+  if (!hasCompletedDetailerSetup) {
+    return <UserPinScreen onBackRole={() => selectOperationalRole('')} />;
+  }
+
+  return <AppNavigator />;
+}
+
+export default function App() {
   return (
     <>
-      <AppNavigator />
+      <AuthProvider>
+        <AppEntry />
+      </AuthProvider>
       <StatusBar style="light" />
     </>
   );
 }
+
+const styles = StyleSheet.create({
+  centeredContainer: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  noAccessTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  noAccessBody: {
+    marginTop: 12,
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+  },
+  signOutButton: {
+    marginTop: 22,
+    backgroundColor: '#667eea',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+  },
+  signOutButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+});

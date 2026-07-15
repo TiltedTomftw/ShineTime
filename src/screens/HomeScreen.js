@@ -1,21 +1,26 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { getOverallStats, getActiveJobs } from '../services/storage';
+import { getOverallStats, getAllJobs } from '../services/storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { useAuth } from '../context/AuthContext';
 
 export default function HomeScreen({ navigation }) {
+  const { activeOperationalRole, activeDealership, signOut, selectOperationalRole } = useAuth();
+  const isManager = (activeOperationalRole || '').toLowerCase() === 'manager';
   const [stats, setStats] = React.useState({
     completed: 0,
     inProgress: 0,
     avgTime: 0,
   });
-  const [activeJobs, setActiveJobs] = React.useState([]);
+  const [recentJobs, setRecentJobs] = React.useState([]);
+  const [pausedCount, setPausedCount] = React.useState(0);
 
   const loadData = async () => {
     const overallStats = await getOverallStats();
     setStats(overallStats);
-    const jobs = await getActiveJobs();
-    setActiveJobs(jobs);
+    const allJobs = await getAllJobs();
+    setRecentJobs(allJobs.slice(0, 8));
+    setPausedCount(allJobs.filter((j) => j.status === 'paused').length);
   };
 
   useFocusEffect(
@@ -28,7 +33,9 @@ export default function HomeScreen({ navigation }) {
     <ScrollView style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Shinetime</Text>
-        <Text style={styles.subtitle}>Detailer Dashboard</Text>
+        <Text style={styles.subtitle}>
+          {isManager ? `${activeDealership?.dealership?.name || 'Dealership'} Manager Dashboard` : 'Detailer Dashboard'}
+        </Text>
       </View>
 
       <View style={styles.stats}>
@@ -41,27 +48,78 @@ export default function HomeScreen({ navigation }) {
           onPress={() => navigation.navigate('InProgress')}
         >
           <Text style={styles.statValue}>{stats.inProgress}</Text>
-          <Text style={styles.statLabel}>In Progress</Text>
+          <Text style={styles.statLabel}>{isManager ? 'Active' : 'In Progress'}</Text>
         </TouchableOpacity>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>{Math.round(stats.avgTime / 60000) || '--'}</Text>
-          <Text style={styles.statLabel}>Avg Time (min)</Text>
+          <Text style={styles.statValue}>{isManager ? pausedCount : (Math.round(stats.avgTime / 60000) || '--')}</Text>
+          <Text style={styles.statLabel}>{isManager ? 'Paused' : 'Avg Time (min)'}</Text>
         </View>
       </View>
 
-      <TouchableOpacity
-        style={styles.primaryButton}
-        onPress={() => navigation.navigate('NewJob')}
-      >
-        <Text style={styles.primaryButtonText}>+ Start New Job</Text>
-      </TouchableOpacity>
+      {!isManager && (
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={() => navigation.navigate('NewJob')}
+        >
+          <Text style={styles.primaryButtonText}>+ Start New Job</Text>
+        </TouchableOpacity>
+      )}
+
+      {isManager && (
+        <View style={styles.managerPanel}>
+          <Text style={styles.managerTitle}>Recent Jobs</Text>
+          {recentJobs.length === 0 ? (
+            <Text style={styles.managerEmpty}>No jobs found yet.</Text>
+          ) : (
+            recentJobs.map((job) => (
+              <TouchableOpacity
+                key={job.jobId}
+                style={styles.managerRow}
+                onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
+              >
+                <View style={styles.managerRowLeft}>
+                  <Text style={styles.managerVehicle}>
+                    {(job.stockNumber || 'No Stock') + ' - ' + (job.make || '') + ' ' + (job.model || '')}
+                  </Text>
+                  <Text style={styles.managerMeta}>{job.detailerName || 'Unknown'} | {job.status || 'queued'}</Text>
+                </View>
+                <Text style={styles.managerChevron}>></Text>
+              </TouchableOpacity>
+            ))
+          )}
+
+          <View style={styles.managerActions}>
+            <TouchableOpacity
+              style={[styles.managerActionButton, styles.managerActionGhost]}
+              onPress={() => selectOperationalRole('')}
+            >
+              <Text style={[styles.managerActionText, styles.managerActionGhostText]}>Switch Role</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.managerActionButton, styles.managerActionDanger]}
+              onPress={signOut}
+            >
+              <Text style={styles.managerActionText}>Log Out</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       <TouchableOpacity
         style={styles.secondaryButton}
         onPress={() => navigation.navigate('History')}
       >
-        <Text style={styles.secondaryButtonText}>View Job History</Text>
+        <Text style={styles.secondaryButtonText}>{isManager ? 'View All Dealership Jobs' : 'View Job History'}</Text>
       </TouchableOpacity>
+
+      {!isManager && (
+        <TouchableOpacity
+          style={styles.changeRoleButton}
+          onPress={() => selectOperationalRole('')}
+        >
+          <Text style={styles.changeRoleButtonText}>Change Role</Text>
+        </TouchableOpacity>
+      )}
     </ScrollView>
   );
 }
@@ -147,5 +205,87 @@ const styles = StyleSheet.create({
     color: '#667eea',
     fontSize: 16,
     fontWeight: '600',
+  },
+  changeRoleButton: {
+    marginHorizontal: 20,
+    marginTop: -8,
+    marginBottom: 20,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  changeRoleButtonText: {
+    color: '#667eea',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  managerPanel: {
+    backgroundColor: 'white',
+    marginHorizontal: 20,
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 10,
+  },
+  managerTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: 10,
+  },
+  managerEmpty: {
+    color: '#777',
+  },
+  managerRow: {
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  managerRowLeft: {
+    flex: 1,
+    marginRight: 8,
+  },
+  managerVehicle: {
+    color: '#222',
+    fontWeight: '600',
+  },
+  managerMeta: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 2,
+    textTransform: 'capitalize',
+  },
+  managerChevron: {
+    color: '#667eea',
+    fontWeight: '700',
+    fontSize: 18,
+  },
+  managerActions: {
+    marginTop: 12,
+    flexDirection: 'row',
+    gap: 8,
+  },
+  managerActionButton: {
+    flex: 1,
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  managerActionGhost: {
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+  },
+  managerActionDanger: {
+    backgroundColor: '#ef4444',
+  },
+  managerActionText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  managerActionGhostText: {
+    color: '#4338ca',
   },
 });
