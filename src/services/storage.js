@@ -20,7 +20,12 @@ const STORAGE_KEYS = {
   DETAILER_NAME: '@detailtracker_detailer_name',
   ACTIVE_DEALERSHIP_ID: '@detailtracker_active_dealership_id',
   ACTIVE_OPERATIONAL_ROLE: '@detailtracker_active_operational_role',
+  PENDING_JOBS: '@detailtracker_pending_jobs',
 };
+
+// Photo signed URLs are minted fresh at read time; keep expiry short so a URL
+// that leaks or gets cached in a payload cannot be replayed for long.
+const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
 
 const ensureArray = (value) => (Array.isArray(value) ? value : []);
 
@@ -182,7 +187,7 @@ const base64ToBlob = async (base64, mimeType) => {
   return response.blob();
 };
 
-const signedUrlFromStoragePath = async (storagePath, expiresInSeconds = 60 * 60 * 24 * 30) => {
+const signedUrlFromStoragePath = async (storagePath, expiresInSeconds = SIGNED_URL_TTL_SECONDS) => {
   if (!storagePath) return '';
   const { data, error } = await supabase.storage
     .from('job-photos')
@@ -412,9 +417,65 @@ const shouldScopeJobsToCurrentDetailer = async () => {
   return role === 'detailer';
 };
 
+// Pending-write queue: jobs whose server sync failed (e.g. offline) are held
+// here and retried on the next sync so an edit is never lost. All additive and
+// guarded — an empty queue is a no-op and existing flows are unchanged.
+let isReplayingQueue = false;
+
+export const getPendingQueue = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(STORAGE_KEYS.PENDING_JOBS);
+    return raw ? ensureArray(JSON.parse(raw)) : [];
+  } catch {
+    return [];
+  }
+};
+
+const savePendingQueue = async (queue) => {
+  try {
+    await AsyncStorage.setItem(STORAGE_KEYS.PENDING_JOBS, JSON.stringify(ensureArray(queue)));
+  } catch (error) {
+    console.log('Could not persist pending queue:', error.message);
+  }
+};
+
+export const enqueuePendingJob = async (job) => {
+  if (!job?.jobId) return;
+  const queue = await getPendingQueue();
+  // De-dupe by jobId, keeping the latest copy of the job.
+  const next = queue.filter((j) => j.jobId !== job.jobId);
+  next.push(job);
+  await savePendingQueue(next);
+};
+
+export const replayPendingQueue = async () => {
+  const queue = await getPendingQueue();
+  if (queue.length === 0) return { replayed: 0, remaining: 0 };
+
+  isReplayingQueue = true;
+  const stillPending = [];
+  let replayed = 0;
+  try {
+    for (const job of queue) {
+      // eslint-disable-next-line no-await-in-loop
+      const ok = await syncJobToServer(job);
+      if (ok) replayed += 1;
+      else stillPending.push(job);
+    }
+  } finally {
+    isReplayingQueue = false;
+  }
+  await savePendingQueue(stillPending);
+  if (replayed > 0) console.log(`[queue] replayed ${replayed}, ${stillPending.length} still pending`);
+  return { replayed, remaining: stillPending.length };
+};
+
 // Sync jobs from server
 export const syncJobsFromServer = async () => {
   try {
+    // Retry any writes that failed while offline before pulling remote state.
+    await replayPendingQueue();
+
     const supabaseJobs = await fetchSupabaseJobs();
     if (supabaseJobs) {
       const scopeToCurrentDetailer = await shouldScopeJobsToCurrentDetailer();
@@ -432,11 +493,14 @@ export const syncJobsFromServer = async () => {
           })
         : supabaseJobs;
 
-      // Supabase is authoritative when online/signed-in for this tenant/role scope.
-      // This prevents stale local rows from appearing when they do not exist remotely.
-      await saveLocalJobs(roleFilteredJobs);
-      console.log(`Synced ${roleFilteredJobs.length} jobs from Supabase`);
-      return roleFilteredJobs;
+      // Supabase is authoritative for this tenant/role scope, but merge in any
+      // local jobs that are newer than (or missing from) the remote set so an
+      // unsynced offline edit is never silently overwritten.
+      const localJobs = await getLocalJobs();
+      const merged = mergeJobsPreferLocalIfNewer(localJobs, roleFilteredJobs);
+      await saveLocalJobs(merged);
+      console.log(`Synced ${roleFilteredJobs.length} remote jobs; ${merged.length} after local merge`);
+      return merged;
     }
   } catch (error) {
     console.log('Could not sync from Supabase:', error.message);
@@ -803,7 +867,7 @@ export const addJobPhoto = async (jobId, image) => {
 
   const { data: signedData, error: signedError } = await supabase.storage
     .from('job-photos')
-    .createSignedUrl(storagePath, 60 * 60 * 24 * 30);
+    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
 
   if (signedError) {
     throw signedError;
@@ -893,6 +957,11 @@ export const syncJobToServer = async (job) => {
     return true;
   } catch (error) {
     console.log(`[sync] failed for ${job?.jobId || 'unknown'}:`, error.message);
+    // Queue for retry on next sync — unless we're already draining the queue,
+    // in which case replayPendingQueue() tracks the failure itself.
+    if (!isReplayingQueue) {
+      await enqueuePendingJob(job);
+    }
     return false;
   }
 };
