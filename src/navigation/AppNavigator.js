@@ -6,6 +6,7 @@ import NewJobScreen from '../screens/NewJobScreen';
 import InProgressScreen from '../screens/InProgressScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import JobDetailScreen from '../screens/JobDetailScreen';
+import ManageInviteCodesScreen from '../screens/ManageInviteCodesScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -44,10 +45,15 @@ export default function AppNavigator() {
           component={HistoryScreen}
           options={{ title: 'All Jobs' }}
         />
-        <Stack.Screen 
-          name="JobDetail" 
+        <Stack.Screen
+          name="JobDetail"
           component={JobDetailScreen}
           options={{ title: 'Job Details' }}
+        />
+        <Stack.Screen
+          name="ManageInviteCodes"
+          component={ManageInviteCodesScreen}
+          options={{ title: 'Invite Team' }}
         />
       </Stack.Navigator>
     </NavigationContainer>

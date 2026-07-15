@@ -98,6 +98,13 @@ export default function HomeScreen({ navigation }) {
             ))
           )}
 
+          <TouchableOpacity
+            style={styles.inviteButton}
+            onPress={() => navigation.navigate('ManageInviteCodes')}
+          >
+            <Text style={styles.inviteButtonText}>+ Invite Team Member</Text>
+          </TouchableOpacity>
+
           <View style={styles.managerActions}>
             <TouchableOpacity
               style={[styles.managerActionButton, styles.managerActionGhost]}
@@ -270,6 +277,19 @@ const styles = StyleSheet.create({
     color: '#667eea',
     fontWeight: '700',
     fontSize: 18,
+  },
+  inviteButton: {
+    marginTop: 12,
+    backgroundColor: '#eef2ff',
+    borderWidth: 1,
+    borderColor: '#c7d2fe',
+    borderRadius: 8,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  inviteButtonText: {
+    color: '#4338ca',
+    fontWeight: '700',
   },
   managerActions: {
     marginTop: 12,

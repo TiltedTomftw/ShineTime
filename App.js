@@ -6,6 +6,8 @@ import AuthScreen from './src/screens/AuthScreen';
 import DealershipSelectScreen from './src/screens/DealershipSelectScreen';
 import RoleSelectionScreen from './src/screens/RoleSelectionScreen';
 import UserPinScreen from './src/screens/UserPinScreen';
+import CreateDealershipScreen from './src/screens/CreateDealershipScreen';
+import JoinByCodeScreen from './src/screens/JoinByCodeScreen';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 
 function NoAccessScreen({ onSignOut }) {
@@ -34,6 +36,7 @@ function AppEntry() {
     selectActiveDealership,
     selectOperationalRole,
   } = useAuth();
+  const [showJoin, setShowJoin] = React.useState(false);
 
   if (isLoading) {
     return null; // Loading
@@ -44,7 +47,12 @@ function AppEntry() {
   }
 
   if (!memberships || memberships.length === 0) {
-    return <NoAccessScreen onSignOut={signOut} />;
+    // No dealership yet: create one (become owner) or join by invite code.
+    return showJoin ? (
+      <JoinByCodeScreen onBack={() => setShowJoin(false)} />
+    ) : (
+      <CreateDealershipScreen onBack={() => setShowJoin(true)} />
+    );
   }
 
   if (!activeDealership) {
