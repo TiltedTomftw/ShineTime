@@ -48,3 +48,38 @@ supabase db push            # if using the CLI against a linked project
 Apply `003_phase1_hardening.sql` **before or alongside** this — both are additive
 and idempotent. Verify with a quick manual test: create a dealership as user A,
 mint a code, redeem it as user B, confirm B sees only that dealership's data.
+
+## Wiring the client screens (not yet wired)
+
+Three draft screens exist and call the RPCs above, but are **not** in the
+navigation yet so the current flow is unchanged:
+
+- [`src/screens/CreateDealershipScreen.js`](../src/screens/CreateDealershipScreen.js)
+- [`src/screens/JoinByCodeScreen.js`](../src/screens/JoinByCodeScreen.js)
+- [`src/screens/ManageInviteCodesScreen.js`](../src/screens/ManageInviteCodesScreen.js)
+
+To wire them:
+
+1. In [`App.js`](../App.js) `AppEntry`, the `memberships.length === 0` branch
+   currently renders `NoAccessScreen`. Replace that with a small local switch
+   between `CreateDealershipScreen` and `JoinByCodeScreen` (each takes an
+   optional `onBack` to toggle to the other, and `onDone` — though `onDone` can
+   be a no-op since `refreshMemberships()` re-drives `AppEntry` automatically).
+   Example:
+
+   ```jsx
+   if (!memberships || memberships.length === 0) {
+     return showJoin
+       ? <JoinByCodeScreen onBack={() => setShowJoin(false)} />
+       : <CreateDealershipScreen onBack={() => setShowJoin(true)} />;
+   }
+   ```
+
+2. Add `ManageInviteCodesScreen` to the manager's navigation (e.g. a new
+   `Stack.Screen` in [`AppNavigator.js`](../src/navigation/AppNavigator.js) and
+   a button from `HomeScreen` shown only when
+   `activeOperationalRole === 'manager'`).
+
+Both `create_dealership` and `redeem_invite_code` succeed → `refreshMemberships()`
+reloads the user's memberships, and the existing `AppEntry` logic auto-selects a
+sole dealership or shows the dealership picker.
