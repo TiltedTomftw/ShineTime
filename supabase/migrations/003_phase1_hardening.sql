@@ -22,9 +22,13 @@ CREATE TABLE IF NOT EXISTS public.dealership_users (
   role public.app_role NOT NULL,
   pin_hash text NOT NULL,
   is_active boolean NOT NULL DEFAULT true,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (dealership_id, lower(name), role)
+  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Case-insensitive uniqueness per dealership+role must be an expression index,
+-- not an inline UNIQUE constraint (Postgres doesn't allow expressions there).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dealership_users_name_role
+  ON public.dealership_users (dealership_id, lower(name), role);
 
 CREATE INDEX IF NOT EXISTS idx_dealership_users_dealership_active
   ON public.dealership_users(dealership_id, is_active);
