@@ -4,7 +4,6 @@ import { StatusBar } from 'expo-status-bar';
 import AppNavigator from './src/navigation/AppNavigator';
 import AuthScreen from './src/screens/AuthScreen';
 import DealershipSelectScreen from './src/screens/DealershipSelectScreen';
-import RoleSelectionScreen from './src/screens/RoleSelectionScreen';
 import UserPinScreen from './src/screens/UserPinScreen';
 import CreateDealershipScreen from './src/screens/CreateDealershipScreen';
 import JoinByCodeScreen from './src/screens/JoinByCodeScreen';
@@ -29,12 +28,10 @@ function AppEntry() {
     session,
     memberships,
     activeDealership,
-    activeOperationalRole,
     hasCompletedDetailerSetup,
     isLoading,
     signOut,
     selectActiveDealership,
-    selectOperationalRole,
   } = useAuth();
   const [showJoin, setShowJoin] = React.useState(false);
 
@@ -65,17 +62,8 @@ function AppEntry() {
     );
   }
 
-  if (!activeOperationalRole) {
-    return (
-      <RoleSelectionScreen
-        onSelectRole={selectOperationalRole}
-        onSignOut={signOut}
-      />
-    );
-  }
-
   if (!hasCompletedDetailerSetup) {
-    return <UserPinScreen onBackRole={() => selectOperationalRole('')} />;
+    return <UserPinScreen />;
   }
 
   return <AppNavigator />;

@@ -2,7 +2,7 @@ import React from 'react';
 import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 
-export default function UserPinScreen({ onBackRole }) {
+export default function UserPinScreen() {
   const { activeOperationalRole, completeDealershipUserAccess, signOut } = useAuth();
   const [mode, setMode] = React.useState('login');
   const [name, setName] = React.useState('');
@@ -62,10 +62,6 @@ export default function UserPinScreen({ onBackRole }) {
 
         <TouchableOpacity style={styles.linkBtn} onPress={() => setMode(mode === 'create' ? 'login' : 'create')}>
           <Text style={styles.linkText}>{mode === 'create' ? 'Have a user already? Login' : 'Need a new user? Create one'}</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.linkBtn} onPress={onBackRole}>
-          <Text style={styles.linkText}>Change role</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.linkBtn} onPress={signOut}>

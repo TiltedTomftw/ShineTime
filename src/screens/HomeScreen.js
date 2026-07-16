@@ -6,7 +6,7 @@ import { vehicleTitle, vehicleDescription } from '../components/VehicleSummary';
 import { useAuth } from '../context/AuthContext';
 
 export default function HomeScreen({ navigation }) {
-  const { activeOperationalRole, activeDealership, signOut, selectOperationalRole } = useAuth();
+  const { activeOperationalRole, activeDealership, signOut } = useAuth();
   const isManager = (activeOperationalRole || '').toLowerCase() === 'manager';
   const [stats, setStats] = React.useState({
     completed: 0,
@@ -106,12 +106,6 @@ export default function HomeScreen({ navigation }) {
 
           <View style={styles.managerActions}>
             <TouchableOpacity
-              style={[styles.managerActionButton, styles.managerActionGhost]}
-              onPress={() => selectOperationalRole('')}
-            >
-              <Text style={[styles.managerActionText, styles.managerActionGhostText]}>Switch Role</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
               style={[styles.managerActionButton, styles.managerActionDanger]}
               onPress={signOut}
             >
@@ -131,9 +125,9 @@ export default function HomeScreen({ navigation }) {
       {!isManager && (
         <TouchableOpacity
           style={styles.changeRoleButton}
-          onPress={() => selectOperationalRole('')}
+          onPress={signOut}
         >
-          <Text style={styles.changeRoleButtonText}>Change Role</Text>
+          <Text style={styles.changeRoleButtonText}>Log Out</Text>
         </TouchableOpacity>
       )}
     </ScrollView>

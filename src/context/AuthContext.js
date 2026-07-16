@@ -18,9 +18,13 @@ const inferNameFromEmail = (email) => {
   return local.slice(0, 50);
 };
 
-const validRoles = ['detailer', 'manager', 'sales'];
+// Operational role comes from the membership (manager-assigned via invite codes /
+// ownership), never self-selected. Owners operate as managers in the app.
+const membershipRoleToOperational = (role) => {
+  const r = (role || '').toLowerCase();
+  return r === 'owner' ? 'manager' : r;
+};
 
-const getOperationalRoleKey = (userId, dealershipId) => `${ACTIVE_OPERATIONAL_ROLE_PREFIX}:${userId}:${dealershipId}`;
 const getOperationalUserKey = (userId, dealershipId) => `${ACTIVE_OPERATIONAL_USER_PREFIX}:${userId}:${dealershipId}`;
 const getDealershipUsersKey = (dealershipId) => `${DEALERSHIP_USERS_PREFIX}:${dealershipId}`;
 
@@ -44,7 +48,6 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = React.useState(null);
   const [memberships, setMemberships] = React.useState([]);
   const [activeDealership, setActiveDealership] = React.useState(null);
-  const [activeOperationalRole, setActiveOperationalRole] = React.useState('');
   const [activeOperationalUser, setActiveOperationalUser] = React.useState(null);
   const [initializing, setInitializing] = React.useState(true);
   const [loadingUserData, setLoadingUserData] = React.useState(false);
@@ -53,6 +56,9 @@ export function AuthProvider({ children }) {
   // onAuthStateChange (which both fire on launch) don't double-bootstrap.
   const bootstrapUserIdRef = React.useRef(null);
 
+  // Role is derived from the active membership (manager-assigned), not chosen.
+  const activeOperationalRole = activeDealership ? membershipRoleToOperational(activeDealership.role) : '';
+
   const hasCompletedDetailerSetup = Boolean(activeOperationalRole && activeOperationalUser?.name);
 
   const resetUserState = React.useCallback(async () => {
@@ -60,22 +66,22 @@ export function AuthProvider({ children }) {
     setProfile(null);
     setMemberships([]);
     setActiveDealership(null);
-    setActiveOperationalRole('');
     setActiveOperationalUser(null);
     await AsyncStorage.removeItem(ACTIVE_DEALERSHIP_KEY);
     await AsyncStorage.removeItem(LEGACY_DETAILER_NAME_KEY);
   }, []);
 
-  const refreshOperationalState = React.useCallback(async (userId, dealershipId) => {
+  const refreshOperationalState = React.useCallback(async (userId, dealershipId, membershipRole) => {
     if (!userId || !dealershipId) {
-      setActiveOperationalRole('');
       setActiveOperationalUser(null);
       return;
     }
 
-    const roleKey = getOperationalRoleKey(userId, dealershipId);
+    // Persist the membership-derived operational role for storage.js job scoping.
+    const operationalRole = membershipRoleToOperational(membershipRole);
+    await AsyncStorage.setItem('@detailtracker_active_operational_role', operationalRole);
+
     const userKey = getOperationalUserKey(userId, dealershipId);
-    const role = (await AsyncStorage.getItem(roleKey)) || '';
     const userRaw = await AsyncStorage.getItem(userKey);
 
     let user = null;
@@ -87,12 +93,9 @@ export function AuthProvider({ children }) {
       }
     }
 
-    setActiveOperationalRole(role);
     setActiveOperationalUser(user && user.name ? user : null);
-
     if (user?.name) {
       await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, user.name);
-      await AsyncStorage.setItem('@detailtracker_active_operational_role', role || '');
     }
   }, []);
 
@@ -120,19 +123,18 @@ export function AuthProvider({ children }) {
 
     if (saved) {
       setActiveDealership(saved);
-      await refreshOperationalState(userId, saved.dealershipId);
+      await refreshOperationalState(userId, saved.dealershipId, saved.role);
       return;
     }
 
     if (normalized.length === 1) {
       await AsyncStorage.setItem(ACTIVE_DEALERSHIP_KEY, normalized[0].dealershipId);
       setActiveDealership(normalized[0]);
-      await refreshOperationalState(userId, normalized[0].dealershipId);
+      await refreshOperationalState(userId, normalized[0].dealershipId, normalized[0].role);
       return;
     }
 
     setActiveDealership(null);
-    setActiveOperationalRole('');
     setActiveOperationalUser(null);
   }, [refreshOperationalState]);
 
@@ -241,38 +243,16 @@ export function AuthProvider({ children }) {
     await AsyncStorage.setItem(ACTIVE_DEALERSHIP_KEY, selected.dealershipId);
 
     if (session?.user?.id) {
-      await refreshOperationalState(session.user.id, selected.dealershipId);
+      await refreshOperationalState(session.user.id, selected.dealershipId, selected.role);
     } else {
-      setActiveOperationalRole('');
       setActiveOperationalUser(null);
     }
   }, [memberships, refreshOperationalState, session?.user?.id]);
 
-  const selectOperationalRole = React.useCallback(async (role) => {
-    if (!session?.user?.id) throw new Error('Not authenticated');
-    if (!activeDealership?.dealershipId) throw new Error('No active dealership');
-    if (role && !validRoles.includes(role)) throw new Error('Invalid role');
-    if (!role) {
-      setActiveOperationalRole('');
-      setActiveOperationalUser(null);
-      await AsyncStorage.removeItem(getOperationalRoleKey(session.user.id, activeDealership.dealershipId));
-      await AsyncStorage.removeItem(getOperationalUserKey(session.user.id, activeDealership.dealershipId));
-      await AsyncStorage.removeItem('@detailtracker_active_operational_role');
-      return;
-    }
-
-    setActiveOperationalRole(role);
-    setActiveOperationalUser(null);
-
-    await AsyncStorage.setItem(getOperationalRoleKey(session.user.id, activeDealership.dealershipId), role);
-    await AsyncStorage.setItem('@detailtracker_active_operational_role', role);
-    await AsyncStorage.removeItem(getOperationalUserKey(session.user.id, activeDealership.dealershipId));
-  }, [session?.user?.id, activeDealership?.dealershipId]);
-
   const completeDealershipUserAccess = React.useCallback(async ({ mode, name, pin }) => {
     if (!session?.user?.id) throw new Error('Not authenticated');
     if (!activeDealership?.dealershipId) throw new Error('No active dealership selected');
-    if (!activeOperationalRole) throw new Error('Select a role first');
+    if (!activeOperationalRole) throw new Error('No role assigned for this dealership');
 
     const sanitizedName = sanitizeName(name);
     const normalizedPin = String(pin || '').trim();
@@ -337,14 +317,13 @@ export function AuthProvider({ children }) {
     signIn,
     signOut,
     selectActiveDealership,
-    selectOperationalRole,
     completeDealershipUserAccess,
     refreshMemberships: async () => {
       if (session?.user) {
         await loadMemberships(session.user.id);
       }
     },
-  }), [session, profile, memberships, activeDealership, activeOperationalRole, activeOperationalUser, hasCompletedDetailerSetup, initializing, loadingUserData, error, signIn, signOut, selectActiveDealership, selectOperationalRole, completeDealershipUserAccess, loadMemberships]);
+  }), [session, profile, memberships, activeDealership, activeOperationalRole, activeOperationalUser, hasCompletedDetailerSetup, initializing, loadingUserData, error, signIn, signOut, selectActiveDealership, completeDealershipUserAccess, loadMemberships]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
