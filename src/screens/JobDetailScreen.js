@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, Image, Platform, FlatList, Dimensions } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { getJobById, pauseJob, resumeJob, completeJob, addJobNote, addJobPhoto } from '../services/storage';
+import { vehicleDescription } from '../components/VehicleSummary';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 
@@ -219,11 +220,10 @@ export default function JobDetailScreen({ route, navigation }) {
           </View>
         </View>
 
-        {/* Vehicle Info */}
-        {job.stockNumber ? <Text style={styles.vehicleText}>Stock #: {job.stockNumber}</Text> : null}
-        {job.make || job.model ? (
-          <Text style={styles.infoText}>{job.make} {job.model} {job.year ? `(${job.year})` : ''}{job.color ? ` • ${job.color}` : ''}</Text>
-        ) : null}
+        {/* Vehicle Info — Stock #, then Year Make Model · Color, then VIN (optional) */}
+        {job.stockNumber ? <Text style={styles.vehicleText}>Stock #{job.stockNumber}</Text> : null}
+        {!!vehicleDescription(job) && <Text style={styles.infoText}>{vehicleDescription(job)}</Text>}
+        {job.vin ? <Text style={[styles.infoText, { color: '#999', fontSize: 13, marginTop: 2 }]}>VIN · {job.vin}</Text> : null}
         
         {/* Job Info */}
         <View style={styles.divider} />

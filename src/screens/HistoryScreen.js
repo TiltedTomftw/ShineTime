@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { getAllJobs, getDetailerName } from '../services/storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { VehicleSummary } from '../components/VehicleSummary';
 
 export default function HistoryScreen({ navigation }) {
   const [jobs, setJobs] = React.useState([]);
@@ -38,12 +39,10 @@ export default function HistoryScreen({ navigation }) {
               onPress={() => navigation.navigate('JobDetail', { jobId: item.jobId })}
             >
               <View style={styles.jobHeader}>
-                <Text style={styles.jobTitle}>
-                  {item.make || item.model ? `${item.make || ''} ${item.model || ''}`.trim() : 'Vehicle Detail'}
-                </Text>
-                <View style={[styles.statusBadge, 
-                  item.status === 'completed' ? styles.statusCompleted : 
-                  item.status === 'paused' ? styles.statusPaused : 
+                <VehicleSummary job={item} style={{ flex: 1, marginRight: 8 }} />
+                <View style={[styles.statusBadge,
+                  item.status === 'completed' ? styles.statusCompleted :
+                  item.status === 'paused' ? styles.statusPaused :
                   styles.statusInProgress
                 ]}>
                   <Text style={styles.statusText}>
@@ -51,10 +50,6 @@ export default function HistoryScreen({ navigation }) {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.jobDetail}>
-                {item.stockNumber ? `Stock: ${item.stockNumber}` : 'No Stock #'}
-                {item.detailType ? ` • ${item.detailType}` : ''}
-              </Text>
               <Text style={styles.jobDetail}>
                 {item.detailerName || 'Unknown detailer'}
               </Text>

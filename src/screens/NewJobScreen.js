@@ -3,14 +3,29 @@ import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert,
 import * as ImagePicker from 'expo-image-picker';
 import { createJob } from '../services/storage';
 import { scanVehicleFromImage } from '../services/ocr';
+import { colors, spacing, radius, type, shadow } from '../theme';
+
+function Field({ label, ...props }) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <TextInput
+        style={styles.fieldInput}
+        placeholderTextColor={colors.textTertiary}
+        {...props}
+      />
+    </View>
+  );
+}
 
 export default function NewJobScreen({ navigation }) {
   const [vehicle, setVehicle] = React.useState({
     stockNumber: '',
+    year: '',
     make: '',
     model: '',
-    year: '',
     color: '',
+    vin: '',
   });
   const [loading, setLoading] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
@@ -33,11 +48,7 @@ export default function NewJobScreen({ navigation }) {
       }
 
       setScanning(true);
-      const result = await ImagePicker.launchCameraAsync({
-        quality: 0.7,
-        base64: true,
-      });
-
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true });
       if (result.canceled) {
         setScanning(false);
         return;
@@ -50,20 +61,17 @@ export default function NewJobScreen({ navigation }) {
         return;
       }
 
-      const ocrData = await scanVehicleFromImage({
-        base64: asset.base64,
-        mimeType: asset.mimeType || 'image/jpeg',
-      });
-
+      const ocr = await scanVehicleFromImage({ base64: asset.base64, mimeType: asset.mimeType || 'image/jpeg' });
       setVehicle({
-        stockNumber: (ocrData.stockNumber || '').toUpperCase().slice(0, 50),
-        make: (ocrData.make || '').slice(0, 50),
-        model: (ocrData.model || '').slice(0, 50),
-        year: (ocrData.year || '').slice(0, 4),
-        color: (ocrData.color || '').slice(0, 30),
+        stockNumber: (ocr.stockNumber || '').toUpperCase().slice(0, 50),
+        year: (ocr.year || '').slice(0, 4),
+        make: (ocr.make || '').slice(0, 50),
+        model: (ocr.model || '').slice(0, 50),
+        color: (ocr.color || '').slice(0, 30),
+        vin: (ocr.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17),
       });
     } catch (error) {
-      const message = error?.response?.data?.error || error.message || 'Scan failed';
+      const message = error?.message || 'Scan failed';
       Alert.alert('Scan Failed', message, [
         { text: 'Retry', onPress: handleScanKeytag },
         { text: 'Manual Entry', style: 'cancel' },
@@ -73,195 +81,122 @@ export default function NewJobScreen({ navigation }) {
     }
   };
 
+  const set = (key, transform) => (text) => setVehicle((v) => ({ ...v, [key]: transform ? transform(text) : text }));
+
   const handleStartJob = async () => {
-    console.log('Start job clicked');
-    console.log('Current vehicle state:', vehicle);
-    console.log('Stock empty?', !vehicle.stockNumber);
-    
-    if (!vehicle.stockNumber) {
-      console.log('❌ VALIDATION FAILED: Please enter Stock Number');
-      Alert.alert('Required', 'Please enter Stock Number');
+    if (!vehicle.stockNumber.trim()) {
+      Alert.alert('Stock Number Required', 'Enter a stock number to start the job.');
       return;
     }
-
     try {
-      console.log('Validation passed - creating job with vehicle:', vehicle);
       setLoading(true);
       const job = await createJob(vehicle);
-      console.log('Job created:', job);
       navigation.replace('JobDetail', { jobId: job.jobId });
     } catch (error) {
-      console.error('Error creating job:', error);
-      Alert.alert('Error', 'Failed to start job: ' + error.message);
+      Alert.alert('Error', 'Could not start job: ' + (error?.message || 'Unknown error'));
       setLoading(false);
     }
   };
 
+  const canStart = vehicle.stockNumber.trim().length > 0 && !loading && !scanning;
+
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.section}>
-        <TouchableOpacity
-          style={[styles.scanButton, scanning && styles.scanButtonDisabled]}
-          onPress={handleScanKeytag}
-          disabled={scanning}
-        >
-          {scanning ? (
-            <ActivityIndicator color="white" />
-          ) : (
-            <Text style={styles.scanButtonText}>📸 Scan Keytag</Text>
-          )}
-        </TouchableOpacity>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <TouchableOpacity
+        style={[styles.scanButton, scanning && styles.scanButtonBusy]}
+        onPress={handleScanKeytag}
+        disabled={scanning}
+        activeOpacity={0.85}
+      >
+        {scanning ? (
+          <ActivityIndicator color={colors.onAccent} />
+        ) : (
+          <Text style={styles.scanButtonText}>Scan Keytag</Text>
+        )}
+      </TouchableOpacity>
+      <Text style={styles.hint}>Point at the keytag or window sticker, or enter details below.</Text>
 
-        <Text style={styles.sectionTitle}>Vehicle Details</Text>
-        
-        <Text style={styles.label}>Stock Number</Text>
-        <TextInput
-          style={styles.input}
+      <View style={styles.card}>
+        <Field
+          label="Stock #"
           value={vehicle.stockNumber}
-          onChangeText={(text) => setVehicle({...vehicle, stockNumber: text.toUpperCase().slice(0, 50)})}
+          onChangeText={set('stockNumber', (t) => t.toUpperCase().slice(0, 50))}
           autoCapitalize="characters"
-          maxLength={50}
+          placeholder="Required"
+          returnKeyType="next"
         />
-        
-        <Text style={styles.label}>Make</Text>
-        <TextInput
-          style={styles.input}
-          value={vehicle.make}
-          onChangeText={(text) => setVehicle({...vehicle, make: text.slice(0, 50)})}
-          maxLength={50}
+        <View style={styles.separator} />
+        <Field
+          label="Year"
+          value={vehicle.year}
+          onChangeText={set('year', (t) => t.replace(/[^0-9]/g, '').slice(0, 4))}
+          keyboardType="number-pad"
+          placeholder="—"
         />
-
-        <Text style={styles.label}>Model</Text>
-        <TextInput
-          style={styles.input}
-          value={vehicle.model}
-          onChangeText={(text) => setVehicle({...vehicle, model: text.slice(0, 50)})}
-          maxLength={50}
-        />
-
-        <View style={styles.row}>
-          <View style={styles.halfInput}>
-            <Text style={styles.label}>Year</Text>
-            <TextInput
-              style={styles.input}
-              value={vehicle.year}
-              onChangeText={(text) => setVehicle({...vehicle, year: text})}
-              keyboardType="numeric"
-              maxLength={4}
-            />
-          </View>
-
-          <View style={styles.halfInput}>
-            <Text style={styles.label}>Color</Text>
-            <TextInput
-              style={styles.input}
-              value={vehicle.color}
-              onChangeText={(text) => setVehicle({...vehicle, color: text.slice(0, 30)})}
-              maxLength={30}
-            />
-          </View>
-        </View>
+        <View style={styles.separator} />
+        <Field label="Make" value={vehicle.make} onChangeText={set('make', (t) => t.slice(0, 50))} placeholder="—" />
+        <View style={styles.separator} />
+        <Field label="Model" value={vehicle.model} onChangeText={set('model', (t) => t.slice(0, 50))} placeholder="—" />
+        <View style={styles.separator} />
+        <Field label="Color" value={vehicle.color} onChangeText={set('color', (t) => t.slice(0, 30))} placeholder="—" />
       </View>
 
-      <TouchableOpacity 
-        style={[styles.startButton, loading && styles.startButtonDisabled]} 
+      <Text style={styles.groupLabel}>OPTIONAL</Text>
+      <View style={styles.card}>
+        <Field
+          label="VIN"
+          value={vehicle.vin}
+          onChangeText={set('vin', (t) => t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17))}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          placeholder="17 characters"
+        />
+      </View>
+
+      <TouchableOpacity
+        style={[styles.startButton, !canStart && styles.startButtonDisabled]}
         onPress={handleStartJob}
-        disabled={loading || scanning}
+        disabled={!canStart}
+        activeOpacity={0.85}
       >
-        {loading ? (
-          <ActivityIndicator color="white" />
-        ) : (
-          <Text style={styles.startButtonText}>🚗 Begin Detailing</Text>
-        )}
+        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.startButtonText}>Begin Detailing</Text>}
       </TouchableOpacity>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  section: {
-    backgroundColor: 'white',
-    margin: 15,
-    padding: 20,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
   scanButton: {
-    backgroundColor: '#111827',
-    padding: 14,
-    borderRadius: 8,
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: 16,
     alignItems: 'center',
-    marginBottom: 16,
+    ...shadow.card,
   },
-  scanButtonText: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '700',
+  scanButtonBusy: { opacity: 0.7 },
+  scanButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '600' },
+  hint: { ...type.footnote, textAlign: 'center', marginTop: spacing.sm, marginBottom: spacing.lg },
+  groupLabel: { ...type.label, marginTop: spacing.lg, marginBottom: spacing.sm, marginLeft: spacing.sm },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    ...shadow.card,
   },
-  scanButtonDisabled: {
-    opacity: 0.6,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 15,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-    marginBottom: 5,
-    marginTop: 10,
-  },
-  input: {
-    backgroundColor: '#f8f9fa',
-    padding: 12,
-    borderRadius: 8,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: '#e9ecef',
-  },
-  orText: {
-    textAlign: 'center',
-    color: '#999',
-    marginVertical: 15,
-    fontSize: 14,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  halfInput: {
-    flex: 1,
-    marginHorizontal: 5,
-  },
+  field: { flexDirection: 'row', alignItems: 'center', minHeight: 52 },
+  fieldLabel: { ...type.body, color: colors.textSecondary, width: 84 },
+  fieldInput: { ...type.body, flex: 1, paddingVertical: 12, textAlign: 'right' },
+  separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 84 },
   startButton: {
-    backgroundColor: '#667eea',
-    margin: 15,
-    padding: 20,
-    borderRadius: 10,
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    paddingVertical: 17,
     alignItems: 'center',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
+    marginTop: spacing.xl,
+    ...shadow.card,
   },
-  startButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  startButtonDisabled: {
-    opacity: 0.6,
-  },
+  startButtonDisabled: { backgroundColor: colors.textTertiary, ...({ shadowOpacity: 0, elevation: 0 }) },
+  startButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '600' },
 });

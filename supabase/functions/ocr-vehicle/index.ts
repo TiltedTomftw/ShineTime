@@ -100,8 +100,9 @@ Deno.serve(async (req) => {
 
     const prompt =
       "You are extracting vehicle details from a keytag or window sticker. " +
-      "Return JSON only with keys: stockNumber, make, model, year, color. " +
-      "Use empty strings if missing. Do not include extra keys or commentary.";
+      "Return JSON only with keys: stockNumber, year, make, model, color, vin. " +
+      "VIN is a 17-character alphanumeric code if shown; use an empty string if it is not present. " +
+      "Use empty strings for any missing field. Do not include extra keys or commentary.";
 
     const geminiResp = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
@@ -156,10 +157,11 @@ Deno.serve(async (req) => {
 
     return json(200, {
       stockNumber: sanitizeInput(parsed.stockNumber || ""),
+      year: sanitizeInput(parsed.year || ""),
       make: sanitizeInput(parsed.make || ""),
       model: sanitizeInput(parsed.model || ""),
-      year: sanitizeInput(parsed.year || ""),
       color: sanitizeInput(parsed.color || ""),
+      vin: sanitizeInput(parsed.vin || ""),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected error";

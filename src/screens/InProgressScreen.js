@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { getAllJobs, getDetailerName } from '../services/storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { VehicleSummary } from '../components/VehicleSummary';
 
 export default function InProgressScreen({ navigation }) {
   const [jobs, setJobs] = React.useState([]);
@@ -38,9 +39,7 @@ export default function InProgressScreen({ navigation }) {
               onPress={() => navigation.navigate('JobDetail', { jobId: item.jobId })}
             >
               <View style={styles.jobHeader}>
-                <Text style={styles.jobTitle}>
-                  {item.make || item.model ? `${item.make || ''} ${item.model || ''}`.trim() : 'Vehicle Detail'}
-                </Text>
+                <VehicleSummary job={item} style={{ flex: 1, marginRight: 8 }} />
                 <View style={[styles.statusBadge,
                   item.status === 'paused' ? styles.statusPaused : styles.statusInProgress
                 ]}>
@@ -49,10 +48,6 @@ export default function InProgressScreen({ navigation }) {
                   </Text>
                 </View>
               </View>
-              <Text style={styles.jobDetail}>
-                {item.stockNumber ? `Stock: ${item.stockNumber}` : 'No Stock #'}
-                {item.detailType ? ` • ${item.detailType}` : ''}
-              </Text>
               <Text style={styles.jobDetail}>
                 {item.detailerName || 'Unknown detailer'}
               </Text>

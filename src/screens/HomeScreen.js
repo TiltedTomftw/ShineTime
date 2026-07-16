@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { getOverallStats, getAllJobs } from '../services/storage';
 import { useFocusEffect } from '@react-navigation/native';
+import { vehicleTitle, vehicleDescription } from '../components/VehicleSummary';
 import { useAuth } from '../context/AuthContext';
 
 export default function HomeScreen({ navigation }) {
@@ -88,10 +89,8 @@ export default function HomeScreen({ navigation }) {
                 onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
               >
                 <View style={styles.managerRowLeft}>
-                  <Text style={styles.managerVehicle}>
-                    {(job.stockNumber || 'No Stock') + ' - ' + (job.make || '') + ' ' + (job.model || '')}
-                  </Text>
-                  <Text style={styles.managerMeta}>{job.detailerName || 'Unknown'} | {job.status || 'queued'}</Text>
+                  <Text style={styles.managerVehicle}>{vehicleTitle(job)}</Text>
+                  <Text style={styles.managerMeta}>{[vehicleDescription(job), job.detailerName || 'Unknown', job.status || 'queued'].filter(Boolean).join('  ·  ')}</Text>
                 </View>
                 <Text style={styles.managerChevron}>></Text>
               </TouchableOpacity>

@@ -592,10 +592,11 @@ export const createJob = async (vehicleData) => {
   // Sanitize all vehicle data inputs
   const sanitizedVehicleData = {
     stockNumber: sanitizeInput(vehicleData.stockNumber),
+    year: sanitizeInput(vehicleData.year),
     make: sanitizeInput(vehicleData.make),
     model: sanitizeInput(vehicleData.model),
-    year: sanitizeInput(vehicleData.year),
     color: sanitizeInput(vehicleData.color),
+    vin: sanitizeInput(vehicleData.vin),
   };
 
   const jobId = `job_${now}_${Math.random().toString(36).slice(2, 9)}`;
