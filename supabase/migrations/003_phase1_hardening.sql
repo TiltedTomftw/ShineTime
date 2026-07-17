@@ -1,7 +1,6 @@
 -- Phase 1 hardening: server-side hashed-PIN detailer identity + RLS tightening
 --
--- STATUS: DRAFT ONLY. This migration has NOT been applied to any database.
--- It must be reviewed and applied manually (see docs/PHASE1_HARDENING_NOTES.md).
+-- STATUS: APPLIED to production 2026-07-15 (see docs/PHASE1_HARDENING_NOTES.md).
 --
 -- Every statement below is written to be idempotent (safe to re-run) so that
 -- review/iteration on this file can happen without needing to track a
@@ -100,10 +99,9 @@ $$;
 --     unauthenticated/low-privilege callers can verify without needing
 --     direct SELECT access to pin_hash.
 --
---     TODO: add server-side rate limiting (e.g. an attempts table keyed on
---     dealership_id + name, or a Postgres advisory lock / cooldown) before
---     this is used against a production login flow. As written this RPC has
---     no throttling and is brute-forceable at the database layer.
+--     NOTE: this version has no throttling and is brute-forceable at the
+--     database layer. 005_rate_limiting.sql replaces it with a membership-gated,
+--     rate-limited version. Do not rely on the body below.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.verify_dealership_user_pin(
   p_dealership_id uuid,

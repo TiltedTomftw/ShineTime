@@ -1,5 +1,5 @@
 -- Phase 2 onboarding groundwork: self-serve dealership creation + invite codes.
--- DRAFT — NOT yet applied to any Supabase project. Review before applying.
+-- STATUS: APPLIED to production 2026-07-15.
 -- Depends on 001_phase1_foundation.sql (dealerships, dealership_memberships,
 -- app_role enum, has_dealership_role()).
 
@@ -142,8 +142,9 @@ begin
 end;
 $$;
 
--- TODO: add server-side rate limiting on generate_invite_code / redeem_invite_code
---       (e.g. per-user attempt counters) before exposing to production.
+-- Rate limiting for generate_invite_code / redeem_invite_code is added in
+-- 005_rate_limiting.sql, which replaces both functions. Note that 005 also
+-- changes redeem_invite_code to return NULL on a bad code rather than raising.
 
 -- Redeem an invite code to join a dealership as the code's role.
 -- SECURITY DEFINER so a not-yet-member caller can join; tenant-safe and

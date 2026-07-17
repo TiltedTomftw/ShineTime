@@ -1,13 +1,19 @@
 # Phase 1 Hardening — Migration 003 Notes
 
-**Status: NOT APPLIED.** `supabase/migrations/003_phase1_hardening.sql` is a
-reviewable draft only. Nothing in this file has been run against the
-Supabase project (`oktqajirertyifyfixfa`), staging or production. No
-`supabase db push`, no SQL editor execution, no data or schema changes have
-been made as part of drafting this migration.
+**Status: APPLIED** to production (`oktqajirertyifyfixfa`) on 2026-07-15, after
+fixing one bug found on the way in: `lower(name)` uniqueness can't live in an
+inline `UNIQUE` constraint and had to become a unique index (commit `2e5fc4b`).
+The "manual steps to apply" section below is kept for reference but has already
+been carried out.
 
-This document explains what the migration does, why, and the exact steps a
-human needs to take to review and apply it later.
+**The rate-limiting gap described in section (c) is closed by migration 005**
+(`supabase/migrations/005_rate_limiting.sql`, drafted 2026-07-16, **not yet
+applied**) — see [`PHASE1_RATE_LIMITING_NOTES.md`](PHASE1_RATE_LIMITING_NOTES.md).
+005 also supersedes this file's claim that PIN identity is unwired: it wires
+`verify_dealership_user_pin` into `AuthContext.js` and adds
+`enroll_dealership_user` for self-enrollment.
+
+This document explains what the migration does and why.
 
 ## What's in the migration
 
