@@ -18,12 +18,14 @@ export default function JoinByCodeScreen({ onDone, onBack }) {
     }
     setSubmitting(true);
     try {
-      const { error } = await supabase.rpc('redeem_invite_code', { p_code: normalized });
+      const { data, error } = await supabase.rpc('redeem_invite_code', { p_code: normalized });
+      // A thrown error means signed-out or rate-limited; a null result is any
+      // bad/expired/exhausted code, kept deliberately indistinguishable.
       if (error) throw error;
+      if (!data) throw new Error('Invalid or expired invite code');
       await refreshMemberships();
       if (onDone) onDone();
     } catch (error) {
-      // RPC returns a single generic error for any bad/expired/used code.
       Alert.alert('Could not join', error?.message || 'Invalid or expired invite code');
     } finally {
       setSubmitting(false);

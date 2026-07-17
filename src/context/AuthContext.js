@@ -28,19 +28,10 @@ const membershipRoleToOperational = (role) => {
 const getOperationalUserKey = (userId, dealershipId) => `${ACTIVE_OPERATIONAL_USER_PREFIX}:${userId}:${dealershipId}`;
 const getDealershipUsersKey = (dealershipId) => `${DEALERSHIP_USERS_PREFIX}:${dealershipId}`;
 
-const loadDealershipUsers = async (dealershipId) => {
-  const raw = await AsyncStorage.getItem(getDealershipUsersKey(dealershipId));
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveDealershipUsers = async (dealershipId, users) => {
-  await AsyncStorage.setItem(getDealershipUsersKey(dealershipId), JSON.stringify(users));
+// PINs are verified server-side against a bcrypt hash (see migration 005). Older
+// builds kept a roster of cleartext PINs on the device; wipe any that remain.
+const purgeLegacyPinRoster = async (dealershipId) => {
+  await AsyncStorage.removeItem(getDealershipUsersKey(dealershipId));
 };
 
 export function AuthProvider({ children }) {
@@ -81,6 +72,8 @@ export function AuthProvider({ children }) {
     const operationalRole = membershipRoleToOperational(membershipRole);
     await AsyncStorage.setItem('@detailtracker_active_operational_role', operationalRole);
 
+    await purgeLegacyPinRoster(dealershipId);
+
     const userKey = getOperationalUserKey(userId, dealershipId);
     const userRaw = await AsyncStorage.getItem(userKey);
 
@@ -91,6 +84,13 @@ export function AuthProvider({ children }) {
       } catch {
         user = null;
       }
+    }
+
+    // A cached user written by an older build carries a cleartext pin; drop it
+    // and rewrite the record without one.
+    if (user && 'pin' in user) {
+      delete user.pin;
+      await AsyncStorage.setItem(userKey, JSON.stringify(user));
     }
 
     setActiveOperationalUser(user && user.name ? user : null);
@@ -261,47 +261,47 @@ export function AuthProvider({ children }) {
     if (normalizedPin.length < 4) throw new Error('PIN must be at least 4 digits');
 
     const dealershipId = activeDealership.dealershipId;
-    const users = await loadDealershipUsers(dealershipId);
     const normalizedRole = activeOperationalRole.toLowerCase();
 
-    const existing = users.find(
-      (u) => (u.name || '').toLowerCase() === sanitizedName.toLowerCase() && (u.role || '').toLowerCase() === normalizedRole
-    );
+    // The PIN never leaves this call: it goes to the server, which compares it
+    // against a bcrypt hash. Nothing below persists it.
+    let operationalUserId;
 
     if (mode === 'create') {
-      if (existing) {
-        throw new Error('User already exists for this role. Switch to login mode.');
-      }
-
-      const newUser = {
-        id: `du_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        name: sanitizedName,
-        role: normalizedRole,
-        pin: normalizedPin,
-        createdAt: Date.now(),
-      };
-
-      users.push(newUser);
-      await saveDealershipUsers(dealershipId, users);
-
-      setActiveOperationalUser(newUser);
-      await AsyncStorage.setItem(getOperationalUserKey(session.user.id, dealershipId), JSON.stringify(newUser));
-      await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, sanitizedName);
-      return newUser;
+      // Role is derived server-side from the caller's membership, so it is not
+      // passed in here.
+      const { data, error: enrollError } = await supabase.rpc('enroll_dealership_user', {
+        p_dealership_id: dealershipId,
+        p_name: sanitizedName,
+        p_pin: normalizedPin,
+      });
+      if (enrollError) throw new Error(enrollError.message || 'Could not create user');
+      operationalUserId = data;
+    } else {
+      const { data, error: verifyError } = await supabase.rpc('verify_dealership_user_pin', {
+        p_dealership_id: dealershipId,
+        p_name: sanitizedName,
+        p_role: normalizedRole,
+        p_pin: normalizedPin,
+      });
+      // A thrown error is the lockout (or an authz failure); a null result is
+      // simply a bad name/PIN, kept deliberately indistinguishable.
+      if (verifyError) throw new Error(verifyError.message || 'Login failed');
+      if (!data) throw new Error('Incorrect name or PIN');
+      operationalUserId = data;
     }
 
-    if (!existing) {
-      throw new Error('User not found for selected role. Create it first.');
-    }
+    const user = {
+      id: operationalUserId,
+      name: sanitizedName,
+      role: normalizedRole,
+      createdAt: Date.now(),
+    };
 
-    if ((existing.pin || '') !== normalizedPin) {
-      throw new Error('Incorrect PIN');
-    }
-
-    setActiveOperationalUser(existing);
-    await AsyncStorage.setItem(getOperationalUserKey(session.user.id, dealershipId), JSON.stringify(existing));
-    await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, existing.name || sanitizedName);
-    return existing;
+    setActiveOperationalUser(user);
+    await AsyncStorage.setItem(getOperationalUserKey(session.user.id, dealershipId), JSON.stringify(user));
+    await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, user.name);
+    return user;
   }, [session?.user?.id, activeDealership?.dealershipId, activeOperationalRole]);
 
   const value = React.useMemo(() => ({
