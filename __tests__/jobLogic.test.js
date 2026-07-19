@@ -7,30 +7,26 @@ const {
   mapSupabaseJobToLegacyShape,
   mergeJobsPreferLocalIfNewer,
   isRemoteNewer,
+  computeLiveElapsed,
 } = require('../src/services/jobLogic');
 
-// --- sanitizeInput (security-critical) ------------------------------------
+// --- sanitizeInput (trim + clamp; no tag stripping) -----------------------
 
-test('sanitizeInput strips <script> blocks entirely', () => {
-  assert.strictEqual(sanitizeInput('hi<script>alert(1)</script> there'), 'hi there');
+test('sanitizeInput trims surrounding whitespace', () => {
+  assert.strictEqual(sanitizeInput('  hello  '), 'hello');
 });
 
-test('sanitizeInput strips generic HTML tags', () => {
-  assert.strictEqual(sanitizeInput('<b>bold</b> text'), 'bold text');
+test('sanitizeInput preserves < and > (no tag stripping / data corruption)', () => {
+  const note = 'scratch < 2in on door > inspect';
+  assert.strictEqual(sanitizeInput(note), note);
 });
 
-test('sanitizeInput removes javascript: URIs', () => {
-  assert.strictEqual(sanitizeInput('javascript:alert(1)'), 'alert(1)');
+test('sanitizeInput caps at the default 200 chars', () => {
+  assert.strictEqual(sanitizeInput('a'.repeat(500)).length, 200);
 });
 
-test('sanitizeInput removes inline event handlers', () => {
-  // The onerror= token is stripped; surrounding text is preserved.
-  assert.ok(!/onerror\s*=/.test(sanitizeInput('x onerror=alert(1)')));
-});
-
-test('sanitizeInput trims and caps length at 200 chars', () => {
-  const out = sanitizeInput('   ' + 'a'.repeat(500) + '   ');
-  assert.strictEqual(out.length, 200);
+test('sanitizeInput respects an explicit maxLength (fixes note truncation bug)', () => {
+  assert.strictEqual(sanitizeInput('a'.repeat(500), 500).length, 500);
 });
 
 test('sanitizeInput passes non-strings through untouched', () => {
@@ -210,4 +206,31 @@ test('isRemoteNewer is false when the remote timestamp is earlier or equal', () 
 test('isRemoteNewer is false for missing or invalid remote timestamps', () => {
   assert.strictEqual(isRemoteNewer(null, 0), false);
   assert.strictEqual(isRemoteNewer('not-a-date', 0), false);
+});
+
+// --- computeLiveElapsed (shared live timer) -------------------------------
+
+test('computeLiveElapsed returns wall time minus accumulated pauses (running)', () => {
+  const job = { startTime: 1000, totalPauseTime: 2000, status: 'in_progress', pauseEvents: [] };
+  assert.strictEqual(computeLiveElapsed(job, 11000), 8000);
+});
+
+test('computeLiveElapsed subtracts the in-progress pause span when paused', () => {
+  const job = {
+    startTime: 0,
+    totalPauseTime: 0,
+    status: 'paused',
+    pauseEvents: [{ type: 'pause', timestamp: 5000 }],
+  };
+  // now=9000, paused since 5000 => 9000 - 4000 = 5000 active
+  assert.strictEqual(computeLiveElapsed(job, 9000), 5000);
+});
+
+test('computeLiveElapsed clamps negative (clock skew) to 0', () => {
+  const job = { startTime: 10000, totalPauseTime: 0, status: 'in_progress', pauseEvents: [] };
+  assert.strictEqual(computeLiveElapsed(job, 5000), 0);
+});
+
+test('computeLiveElapsed handles a null job', () => {
+  assert.strictEqual(computeLiveElapsed(null, 1000), 0);
 });

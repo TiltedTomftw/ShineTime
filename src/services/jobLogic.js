@@ -4,17 +4,13 @@
 // these; behavior is unchanged. CommonJS so Node's built-in test runner can
 // require() it directly (same pattern as timeMath.js).
 
-// Sanitize input to prevent XSS and injection attacks.
-const sanitizeInput = (input) => {
+// Trim and length-cap free text. We deliberately do NOT strip HTML: React
+// Native <Text> never interprets markup, React escapes on web, and the manager
+// dashboard escapes via textContent — so there is no XSS vector here. Tag
+// stripping only corrupted legitimate input (e.g. a note like "scratch < 2in").
+const sanitizeInput = (input, maxLength = 200) => {
   if (typeof input !== 'string') return input;
-  // Remove any HTML tags, scripts, and dangerous characters
-  return input
-    .replace(/<script[^>]*>.*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+\s*=/gi, '')
-    .trim()
-    .slice(0, 200); // Max 200 characters
+  return input.trim().slice(0, maxLength);
 };
 
 const ensureArray = (value) => (Array.isArray(value) ? value : []);
@@ -100,6 +96,23 @@ const isRemoteNewer = (remoteClientUpdatedAt, localUpdatedAtMs) => {
   return remoteMs > localMs;
 };
 
+// Active elapsed time for a running/paused job (ms), clamped against clock skew.
+// Subtracts accumulated pause time plus, when currently paused, the in-progress
+// pause span. Single source of truth for the live timer across all screens
+// (previously copy-pasted as getElapsedTime in three places). `now` is injectable
+// so it stays pure and unit-testable.
+const computeLiveElapsed = (job, now = Date.now()) => {
+  if (!job) return 0;
+  const events = ensureArray(job.pauseEvents);
+  const lastPause = events[events.length - 1];
+  const currentPause =
+    job.status === 'paused' && lastPause && lastPause.type === 'pause'
+      ? Math.max(0, now - Number(lastPause.timestamp || 0))
+      : 0;
+  const elapsed = now - Number(job.startTime || 0) - Number(job.totalPauseTime || 0) - currentPause;
+  return elapsed > 0 ? elapsed : 0;
+};
+
 module.exports = {
   sanitizeInput,
   ensureArray,
@@ -107,4 +120,5 @@ module.exports = {
   mapSupabaseJobToLegacyShape,
   mergeJobsPreferLocalIfNewer,
   isRemoteNewer,
+  computeLiveElapsed,
 };

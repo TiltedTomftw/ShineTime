@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 import { getAllJobs, getDetailerName } from '../services/storage';
+import { computeLiveElapsed } from '../services/jobLogic';
+import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
 import { VehicleSummary } from '../components/VehicleSummary';
 
@@ -58,8 +60,8 @@ export default function HistoryScreen({ navigation }) {
               <Text style={styles.jobDetail}>{item.detailerName || 'Unknown detailer'}</Text>
               <Text style={styles.jobDetail}>
                 {item.status === 'completed'
-                  ? `Completed: ${formatTime(item.totalActiveTime)}`
-                  : `In progress: ${formatTime(getElapsedTime(item))}`}
+                  ? `Completed: ${formatDuration(item.totalActiveTime)}`
+                  : `In progress: ${formatDuration(computeLiveElapsed(item))}`}
               </Text>
             </TouchableOpacity>
           )}
@@ -67,25 +69,6 @@ export default function HistoryScreen({ navigation }) {
       )}
     </View>
   );
-}
-
-function getElapsedTime(job) {
-  const now = Date.now();
-  const lastPause =
-    job.pauseEvents && job.pauseEvents.length > 0
-      ? job.pauseEvents[job.pauseEvents.length - 1]
-      : null;
-  const currentPauseDuration =
-    job.status === 'paused' && lastPause && lastPause.type === 'pause'
-      ? now - lastPause.timestamp
-      : 0;
-  return now - job.startTime - job.totalPauseTime - currentPauseDuration;
-}
-
-function formatTime(ms) {
-  if (!ms) return '--';
-  const minutes = Math.floor(ms / 60000);
-  return `${minutes} min`;
 }
 
 const styles = StyleSheet.create({

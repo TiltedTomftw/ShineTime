@@ -596,7 +596,7 @@ export const getCompletedJobs = async (filterDate = null) => {
 export const pauseJob = async (jobId, noteText = '') => {
   const pauseTime = Date.now();
   const detailerName = await getDetailerName();
-  const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
+  const sanitizedNote = sanitizeInput(noteText || '', 500);
 
   await findJobWithRecovery(jobId);
 
@@ -760,7 +760,7 @@ export const completeJob = async (jobId) => {
 // Add a note to an in-progress job
 export const addJobNote = async (jobId, noteText) => {
   const detailerName = await getDetailerName();
-  const sanitizedNote = sanitizeInput(noteText || '').slice(0, 500);
+  const sanitizedNote = sanitizeInput(noteText || '', 500);
 
   if (!sanitizedNote) {
     throw new Error('Note cannot be empty');
@@ -855,7 +855,7 @@ export const addJobPhoto = async (jobId, image) => {
 
   const detailerName = await getDetailerName();
   const timestamp = Date.now();
-  const note = sanitizeInput(image.note || '').slice(0, 500);
+  const note = sanitizeInput(image.note || '', 500);
 
   // Persist the metadata row FIRST. If it fails, delete the orphaned storage
   // object and surface the error — otherwise the object leaks and the photo
