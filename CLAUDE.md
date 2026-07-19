@@ -13,21 +13,22 @@ This product ships **two independent front-ends**. Do NOT conflate them:
    Jobs" panel), but **the app is not the management tool** — keep the manager
    HomeScreen minimal.
 
-2. **The manager dashboard** — a JIRA-style **web app that lives in a SEPARATE
-   GitHub repo** and is NOT in this repo at all:
-   - **Repo:** `TiltedTomftw/shinetime-dashboard` — a single `index.html`.
-   - **Live (GitHub Pages):** https://tiltedtomftw.github.io/shinetime-dashboard/
+2. **The manager dashboard** — a JIRA-style **standalone web app** that lives in
+   THIS repo at **`dashboard/index.html`** (one self-contained static file;
+   consolidated from the old `TiltedTomftw/shinetime-dashboard` repo). It is a
+   **separate surface from the RN app** — do NOT rebuild its features inside the
+   HomeScreen; edit `dashboard/index.html` directly. See `dashboard/README.md`.
+   - **Deploy:** auto-published to GitHub Pages by
+     `.github/workflows/deploy-dashboard.yml` on push to `main` (one-time:
+     Settings → Pages → Source → "GitHub Actions").
    - **Usage:** opened per-dealership via `?d=DEALERSHIP_UUID`; manager signs in
-     with email/password; reads Supabase directly (anon key + RLS).
+     (email/password); reads Supabase directly (anon key + RLS).
    - **Features:** STATUS / DATE-RANGE / DETAILER / free-text SEARCH filters,
      Cards + Compact-Table views, stat tiles (Completed / Active / Paused / Avg),
      Top Detailers, Longest Active Jobs, Coverage (notes/photos/custody).
-   - **It is NOT part of the RN app and must never be rebuilt inside HomeScreen.**
-     If the user wants "manager dashboard" changes, they mean the
-     **`shinetime-dashboard` repo**, not `src/`.
-   - (Historical/superseded copies: `server/public/manager.html` on branch
+   - (Superseded copies to ignore: `server/public/manager.html` on branch
      `feature/supabase-remote-sync`, and the `supabase/functions/manager-dashboard`
-     Edge Function. The `shinetime-dashboard` repo is the live source of truth.)
+     Edge Function.)
 
 ## Environment (read first)
 
