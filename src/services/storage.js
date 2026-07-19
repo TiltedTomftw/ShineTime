@@ -1,19 +1,14 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 import { computeActiveTime, computePauseDuration, accumulateDetailerTime } from './timeMath';
-
-// Sanitize input to prevent XSS and injection attacks
-const sanitizeInput = (input) => {
-  if (typeof input !== 'string') return input;
-  // Remove any HTML tags, scripts, and dangerous characters
-  return input
-    .replace(/<script[^>]*>.*?<\/script>/gi, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/javascript:/gi, '')
-    .replace(/on\w+\s*=/gi, '')
-    .trim()
-    .slice(0, 200); // Max 200 characters
-};
+import {
+  sanitizeInput,
+  ensureArray,
+  parseTimestamp,
+  mapSupabaseJobToLegacyShape,
+  mergeJobsPreferLocalIfNewer,
+  isRemoteNewer,
+} from './jobLogic';
 
 const STORAGE_KEYS = {
   JOBS: '@detailtracker_jobs',
@@ -27,57 +22,6 @@ const STORAGE_KEYS = {
 // Photo signed URLs are minted fresh at read time; keep expiry short so a URL
 // that leaks or gets cached in a payload cannot be replayed for long.
 const SIGNED_URL_TTL_SECONDS = 60 * 60; // 1 hour
-
-const ensureArray = (value) => (Array.isArray(value) ? value : []);
-
-const parseTimestamp = (value) => {
-  if (!value) return null;
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : null;
-};
-
-const mapSupabaseJobToLegacyShape = (row) => {
-  const payload = row && typeof row.payload === 'object' && row.payload !== null ? row.payload : {};
-  const createdAtMs = parseTimestamp(row.created_at);
-  const updatedAtMs = parseTimestamp(row.client_updated_at) || parseTimestamp(row.updated_at);
-  const startedAtMs = parseTimestamp(row.started_at);
-  const endedAtMs = parseTimestamp(row.ended_at);
-
-  const detailerFromList =
-    Array.isArray(payload.detailers) && payload.detailers.length > 0
-      ? payload.detailers[payload.detailers.length - 1]
-      : null;
-
-  return {
-    ...payload,
-    jobId: payload.jobId || row.legacy_job_id || row.id,
-    status: payload.status || row.status || 'queued',
-    deviceId: payload.deviceId || row.device_id || null,
-    stockNumber: payload.stockNumber || row.stock_number || null,
-    vin: payload.vin || row.vin || null,
-    make: payload.make || row.make || null,
-    model: payload.model || row.model || null,
-    year: payload.year || row.year || null,
-    color: payload.color || row.color || null,
-    detailerName: payload.detailerName || detailerFromList || 'Unknown',
-    startTime: payload.startTime || startedAtMs || createdAtMs || Date.now(),
-    endTime: payload.endTime || endedAtMs || null,
-    createdAt: payload.createdAt || createdAtMs || Date.now(),
-    updatedAt: payload.updatedAt || updatedAtMs || Date.now(),
-    totalPauseTime: Number(payload.totalPauseTime || row.total_pause_ms || 0),
-    totalActiveTime: Number(payload.totalActiveTime || row.total_active_ms || 0),
-    pauseEvents: ensureArray(payload.pauseEvents),
-    notes: ensureArray(payload.notes),
-    custodyEvents: ensureArray(payload.custodyEvents),
-    detailers: ensureArray(payload.detailers),
-    createdByUserId: payload.createdByUserId || row.created_by_user_id || null,
-    assignedDetailerId: payload.assignedDetailerId || row.assigned_detailer_id || null,
-    detailerTimeTracking:
-      payload.detailerTimeTracking && typeof payload.detailerTimeTracking === 'object'
-        ? payload.detailerTimeTracking
-        : {},
-  };
-};
 
 const fetchSupabaseJobs = async () => {
   const {
@@ -113,7 +57,7 @@ const fetchSupabaseJobs = async () => {
         'created_at',
         'updated_at',
         'payload',
-      ].join(',')
+      ].join(','),
     )
     .eq('dealership_id', dealershipId)
     .is('deleted_at', null)
@@ -238,47 +182,49 @@ const insertSupabaseNote = async ({ job, detailerName, noteText, noteTimestamp }
   const remoteJobId = await getRemoteJobIdByLegacyId(context.dealershipId, job.jobId);
   if (!remoteJobId) return false;
 
-  const { error } = await supabase
-    .from('job_notes')
-    .insert({
-      job_id: remoteJobId,
-      dealership_id: context.dealershipId,
-      author_user_id: context.userId,
-      author_name: detailerName || 'Unknown',
-      note: noteText,
-      created_at: toIsoOrNull(noteTimestamp) || new Date().toISOString(),
-      metadata: {
-        source: 'mobile',
-        legacy_job_id: job.jobId,
-        source_timestamp: noteTimestamp || Date.now(),
-      },
-    });
+  const { error } = await supabase.from('job_notes').insert({
+    job_id: remoteJobId,
+    dealership_id: context.dealershipId,
+    author_user_id: context.userId,
+    author_name: detailerName || 'Unknown',
+    note: noteText,
+    created_at: toIsoOrNull(noteTimestamp) || new Date().toISOString(),
+    metadata: {
+      source: 'mobile',
+      legacy_job_id: job.jobId,
+      source_timestamp: noteTimestamp || Date.now(),
+    },
+  });
 
   if (error) throw error;
   return true;
 };
 
-const insertSupabaseWorkLog = async ({ job, eventType, actorName, noteText = '', eventTimestamp = Date.now() }) => {
+const insertSupabaseWorkLog = async ({
+  job,
+  eventType,
+  actorName,
+  noteText = '',
+  eventTimestamp = Date.now(),
+}) => {
   const context = await getSupabaseSyncContext();
   const remoteJobId = await getRemoteJobIdByLegacyId(context.dealershipId, job.jobId);
   if (!remoteJobId) return false;
 
-  const { error } = await supabase
-    .from('job_work_logs')
-    .insert({
-      job_id: remoteJobId,
-      dealership_id: context.dealershipId,
-      event_type: eventType,
-      actor_user_id: context.userId,
-      actor_name: actorName || 'Unknown',
-      note: noteText || null,
-      event_at: toIsoOrNull(eventTimestamp) || new Date().toISOString(),
-      metadata: {
-        source: 'mobile',
-        legacy_job_id: job.jobId,
-        source_timestamp: eventTimestamp,
-      },
-    });
+  const { error } = await supabase.from('job_work_logs').insert({
+    job_id: remoteJobId,
+    dealership_id: context.dealershipId,
+    event_type: eventType,
+    actor_user_id: context.userId,
+    actor_name: actorName || 'Unknown',
+    note: noteText || null,
+    event_at: toIsoOrNull(eventTimestamp) || new Date().toISOString(),
+    metadata: {
+      source: 'mobile',
+      legacy_job_id: job.jobId,
+      source_timestamp: eventTimestamp,
+    },
+  });
 
   if (error) throw error;
   return true;
@@ -344,41 +290,14 @@ const enrichJobFromNormalizedTables = async (job) => {
     return {
       ...job,
       notes: normalizedNotes.length > 0 ? normalizedNotes : ensureArray(job.notes),
-      custodyEvents: normalizedCustody.length > 0 ? normalizedCustody : ensureArray(job.custodyEvents),
+      custodyEvents:
+        normalizedCustody.length > 0 ? normalizedCustody : ensureArray(job.custodyEvents),
       photos: normalizedPhotos.length > 0 ? normalizedPhotos : ensureArray(job.photos),
     };
   } catch (error) {
     console.log('Could not enrich job from normalized tables:', error.message);
     return job;
   }
-};
-
-const mergeJobsPreferLocalIfNewer = (localJobs, remoteJobs) => {
-  const remoteById = new Map(ensureArray(remoteJobs).map((job) => [job.jobId, job]));
-
-  for (const localJob of ensureArray(localJobs)) {
-    const remoteJob = remoteById.get(localJob.jobId);
-    if (!remoteJob) {
-      remoteById.set(localJob.jobId, localJob);
-      continue;
-    }
-
-    const localUpdated = Number(localJob.updatedAt || 0);
-    const remoteUpdated = Number(remoteJob.updatedAt || 0);
-    if (localUpdated > remoteUpdated) {
-      remoteById.set(localJob.jobId, localJob);
-    }
-  }
-
-  return Array.from(remoteById.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-};
-
-const isRemoteNewer = (remoteClientUpdatedAt, localUpdatedAtMs) => {
-  if (!remoteClientUpdatedAt) return false;
-  const remoteMs = new Date(remoteClientUpdatedAt).getTime();
-  if (!Number.isFinite(remoteMs)) return false;
-  const localMs = Number(localUpdatedAtMs || 0);
-  return remoteMs > localMs;
 };
 
 const addCustodyEvent = (job, type, detailerName, note) => {
@@ -412,7 +331,9 @@ export const getDetailerName = async () => {
 };
 
 const shouldScopeJobsToCurrentDetailer = async () => {
-  const role = (await AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_OPERATIONAL_ROLE) || '').toLowerCase();
+  const role = (
+    (await AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_OPERATIONAL_ROLE)) || ''
+  ).toLowerCase();
   // Safe default: if role is missing, keep detailer-level scoping.
   if (!role) return true;
   return role === 'detailer';
@@ -458,7 +379,6 @@ export const replayPendingQueue = async () => {
   let replayed = 0;
   try {
     for (const job of queue) {
-      // eslint-disable-next-line no-await-in-loop
       const ok = await syncJobToServer(job);
       if (ok) replayed += 1;
       else stillPending.push(job);
@@ -467,7 +387,8 @@ export const replayPendingQueue = async () => {
     isReplayingQueue = false;
   }
   await savePendingQueue(stillPending);
-  if (replayed > 0) console.log(`[queue] replayed ${replayed}, ${stillPending.length} still pending`);
+  if (replayed > 0)
+    console.log(`[queue] replayed ${replayed}, ${stillPending.length} still pending`);
   return { replayed, remaining: stillPending.length };
 };
 
@@ -505,7 +426,9 @@ const runSyncFromServer = async () => {
         return next;
       });
       const scopedView = merged.filter(inCurrentScope);
-      console.log(`Synced ${roleFilteredJobs.length} in-scope remote jobs; returning ${scopedView.length}`);
+      console.log(
+        `Synced ${roleFilteredJobs.length} in-scope remote jobs; returning ${scopedView.length}`,
+      );
       return scopedView;
     }
   } catch (error) {
@@ -557,7 +480,10 @@ let jobsMutex = Promise.resolve();
 const withJobsLock = (fn) => {
   const run = jobsMutex.then(fn, fn);
   // Keep the chain alive even if this operation rejects.
-  jobsMutex = run.then(() => {}, () => {});
+  jobsMutex = run.then(
+    () => {},
+    () => {},
+  );
   return run;
 };
 
@@ -588,7 +514,7 @@ export const createJob = async (vehicleData) => {
   const deviceId = await getDeviceId();
   const detailerName = await getDetailerName();
   const now = Date.now();
-  
+
   // Sanitize all vehicle data inputs
   const sanitizedVehicleData = {
     stockNumber: sanitizeInput(vehicleData.stockNumber),
@@ -647,22 +573,22 @@ export const createJob = async (vehicleData) => {
 // Get active jobs - syncs from server first
 export const getActiveJobs = async () => {
   const jobs = await syncJobsFromServer();
-  return jobs.filter(j => j.status === 'in_progress');
+  return jobs.filter((j) => j.status === 'in_progress');
 };
 
 // Get completed jobs - syncs from server first
 export const getCompletedJobs = async (filterDate = null) => {
   const jobs = await syncJobsFromServer();
-  let completed = jobs.filter(j => j.status === 'completed');
-  
+  let completed = jobs.filter((j) => j.status === 'completed');
+
   if (filterDate) {
-    completed = completed.filter(j => {
+    completed = completed.filter((j) => {
       const jobDate = new Date(j.createdAt);
       const filterDateObj = new Date(filterDate);
       return jobDate.toDateString() === filterDateObj.toDateString();
     });
   }
-  
+
   return completed.sort((a, b) => b.createdAt - a.createdAt);
 };
 
@@ -683,15 +609,23 @@ export const pauseJob = async (jobId, noteText = '') => {
     target.detailerTimeTracking[target.detailerName] = accumulateDetailerTime(
       target.detailerTimeTracking[target.detailerName] || 0,
       target.currentDetailerStartTime || target.startTime,
-      pauseTime
+      pauseTime,
     );
 
     target.pauseEvents = ensureArray(target.pauseEvents);
-    target.pauseEvents.push({ type: 'pause', timestamp: pauseTime, detailerName: target.detailerName });
+    target.pauseEvents.push({
+      type: 'pause',
+      timestamp: pauseTime,
+      detailerName: target.detailerName,
+    });
     target.status = 'paused';
     if (sanitizedNote) {
       const notes = ensureArray(target.notes);
-      notes.unshift({ timestamp: pauseTime, detailerName: detailerName || 'Unknown', text: sanitizedNote });
+      notes.unshift({
+        timestamp: pauseTime,
+        detailerName: detailerName || 'Unknown',
+        text: sanitizedNote,
+      });
       target.notes = notes;
       target.latestNote = sanitizedNote;
     }
@@ -731,7 +665,8 @@ export const resumeJob = async (jobId) => {
     const events = ensureArray(target.pauseEvents);
     const lastPause = events[events.length - 1];
     if (lastPause && lastPause.type === 'pause') {
-      target.totalPauseTime = Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, resumeTime);
+      target.totalPauseTime =
+        Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, resumeTime);
     }
 
     events.push({ type: 'resume', timestamp: resumeTime, detailerName: target.detailerName });
@@ -782,7 +717,8 @@ export const completeJob = async (jobId) => {
       const events = ensureArray(target.pauseEvents);
       const lastPause = events[events.length - 1];
       if (lastPause && lastPause.type === 'pause') {
-        target.totalPauseTime = Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, endTime);
+        target.totalPauseTime =
+          Number(target.totalPauseTime || 0) + computePauseDuration(lastPause.timestamp, endTime);
       }
     }
 
@@ -791,7 +727,7 @@ export const completeJob = async (jobId) => {
     target.detailerTimeTracking[target.detailerName] = accumulateDetailerTime(
       target.detailerTimeTracking[target.detailerName] || 0,
       target.currentDetailerStartTime || target.startTime,
-      endTime
+      endTime,
     );
 
     target.endTime = endTime;
@@ -843,7 +779,11 @@ export const addJobNote = async (jobId, noteText) => {
     const target = jobs.find((j) => j.jobId === jobId);
     if (!target || target.status === 'completed') return null;
     const notes = ensureArray(target.notes);
-    notes.unshift({ timestamp: noteTimestamp, detailerName: detailerName || 'Unknown', text: sanitizedNote });
+    notes.unshift({
+      timestamp: noteTimestamp,
+      detailerName: detailerName || 'Unknown',
+      text: sanitizedNote,
+    });
     target.notes = notes;
     target.latestNote = sanitizedNote;
     target.updatedAt = noteTimestamp;
@@ -921,26 +861,27 @@ export const addJobPhoto = async (jobId, image) => {
   // object and surface the error — otherwise the object leaks and the photo
   // disappears once its short-lived signed URL expires (there'd be no row for
   // enrichJobFromNormalizedTables to re-sign from).
-  const { error: photoRowError } = await supabase
-    .from('job_photos')
-    .insert({
-      job_id: remoteJobId,
-      dealership_id: context.dealershipId,
-      uploaded_by_user_id: context.userId,
-      uploaded_by_name: detailerName || 'Unknown',
-      storage_path: storagePath,
-      photo_type: image.photoType || null,
-      created_at: toIsoOrNull(timestamp) || new Date().toISOString(),
-      metadata: {
-        mimeType,
-        note,
-        source: 'mobile',
-        legacy_job_id: existing.jobId,
-      },
-    });
+  const { error: photoRowError } = await supabase.from('job_photos').insert({
+    job_id: remoteJobId,
+    dealership_id: context.dealershipId,
+    uploaded_by_user_id: context.userId,
+    uploaded_by_name: detailerName || 'Unknown',
+    storage_path: storagePath,
+    photo_type: image.photoType || null,
+    created_at: toIsoOrNull(timestamp) || new Date().toISOString(),
+    metadata: {
+      mimeType,
+      note,
+      source: 'mobile',
+      legacy_job_id: existing.jobId,
+    },
+  });
 
   if (photoRowError) {
-    await supabase.storage.from('job-photos').remove([storagePath]).catch(() => {});
+    await supabase.storage
+      .from('job-photos')
+      .remove([storagePath])
+      .catch(() => {});
     throw new Error('Could not save photo record: ' + photoRowError.message);
   }
 
@@ -1003,9 +944,7 @@ export const syncJobToServer = async (job) => {
       return true;
     }
 
-    const { error: insertError } = await supabase
-      .from('jobs')
-      .insert(row);
+    const { error: insertError } = await supabase.from('jobs').insert(row);
 
     if (insertError) throw insertError;
     console.log(`[sync] inserted job ${job.jobId}`);
@@ -1017,7 +956,7 @@ export const syncJobToServer = async (job) => {
     console.log(
       `[sync] failed for ${job?.jobId || 'unknown'}:`,
       error.message,
-      isPermanentConflict ? '(permanent conflict; not retrying)' : ''
+      isPermanentConflict ? '(permanent conflict; not retrying)' : '',
     );
     // Queue for retry on next sync — unless we're already draining the queue
     // (replayPendingQueue tracks that itself) or the failure is permanent.
@@ -1037,7 +976,6 @@ export const syncAllJobs = async () => {
 
     let synced = 0;
     for (const job of jobs) {
-      // eslint-disable-next-line no-await-in-loop
       const ok = await syncJobToServer(job);
       if (ok) synced += 1;
     }
@@ -1064,7 +1002,7 @@ export const checkServerConnection = async () => {
       .limit(1);
     if (error) throw error;
     return true;
-  } catch (error) {
+  } catch {
     return false;
   }
 };
@@ -1079,7 +1017,7 @@ export const getAllJobs = async () => {
 // Get job by ID
 export const getJobById = async (jobId) => {
   const localJobs = await getLocalJobs();
-  const localMatch = localJobs.find(j => j.jobId === jobId);
+  const localMatch = localJobs.find((j) => j.jobId === jobId);
   if (localMatch) {
     // Keep this view snappy; sync in background but return local immediately.
     syncJobsFromServer().catch((error) => {
@@ -1089,7 +1027,7 @@ export const getJobById = async (jobId) => {
   }
 
   const jobs = await syncJobsFromServer();
-  const match = jobs.find(j => j.jobId === jobId);
+  const match = jobs.find((j) => j.jobId === jobId);
   if (!match) return null;
   return await enrichJobFromNormalizedTables(match);
 };
@@ -1098,8 +1036,8 @@ export const getJobById = async (jobId) => {
 export const getOverallStats = async () => {
   const jobs = await syncJobsFromServer();
 
-  const completed = jobs.filter(j => j.status === 'completed');
-  const inProgress = jobs.filter(j => j.status === 'in_progress' || j.status === 'paused');
+  const completed = jobs.filter((j) => j.status === 'completed');
+  const inProgress = jobs.filter((j) => j.status === 'in_progress' || j.status === 'paused');
 
   const totalTime = completed.reduce((sum, j) => sum + (j.totalActiveTime || 0), 0);
   const avgTime = completed.length > 0 ? totalTime / completed.length : 0;

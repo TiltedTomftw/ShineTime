@@ -1,12 +1,23 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, KeyboardAvoidingView, Platform } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+} from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function OnboardingScreen({ onComplete }) {
   const [name, setName] = React.useState('');
 
   const handleSubmit = async () => {
-    const sanitizedName = name.trim().slice(0, 50).replace(/<[^>]*>/g, '');
+    const sanitizedName = name
+      .trim()
+      .slice(0, 50)
+      .replace(/<[^>]*>/g, '');
     if (sanitizedName) {
       await AsyncStorage.setItem('@detailtracker_detailer_name', sanitizedName);
       onComplete();
@@ -14,15 +25,15 @@ export default function OnboardingScreen({ onComplete }) {
   };
 
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
+    <KeyboardAvoidingView
+      style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
       <View style={styles.content}>
         <Text style={styles.title}>Welcome to Shinetime</Text>
-        <Text style={styles.subtitle}>Let's get you set up</Text>
-        
-        <Text style={styles.label}>What's your name?</Text>
+        <Text style={styles.subtitle}>Let&apos;s get you set up</Text>
+
+        <Text style={styles.label}>What&apos;s your name?</Text>
         <TextInput
           style={styles.input}
           value={name}
@@ -34,7 +45,7 @@ export default function OnboardingScreen({ onComplete }) {
           maxLength={50}
         />
 
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.button, !name.trim() && styles.buttonDisabled]}
           onPress={handleSubmit}
           disabled={!name.trim()}

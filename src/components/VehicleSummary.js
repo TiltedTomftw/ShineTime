@@ -17,9 +17,19 @@ export function VehicleSummary({ job, style }) {
   const desc = vehicleDescription(job);
   return (
     <View style={style}>
-      <Text style={styles.title} numberOfLines={1}>{vehicleTitle(job)}</Text>
-      {!!desc && <Text style={styles.desc} numberOfLines={1}>{desc}</Text>}
-      {!!job?.vin && <Text style={styles.vin} numberOfLines={1}>VIN · {job.vin}</Text>}
+      <Text style={styles.title} numberOfLines={1}>
+        {vehicleTitle(job)}
+      </Text>
+      {!!desc && (
+        <Text style={styles.desc} numberOfLines={1}>
+          {desc}
+        </Text>
+      )}
+      {!!job?.vin && (
+        <Text style={styles.vin} numberOfLines={1}>
+          VIN · {job.vin}
+        </Text>
+      )}
     </View>
   );
 }

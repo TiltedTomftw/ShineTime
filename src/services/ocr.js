@@ -1,9 +1,7 @@
 import { supabase } from '../lib/supabase';
 
 export const scanVehicleFromImage = async ({ base64, mimeType, dataUrl }) => {
-  const payload = dataUrl
-    ? { dataUrl }
-    : { imageBase64: base64, mimeType };
+  const payload = dataUrl ? { dataUrl } : { imageBase64: base64, mimeType };
 
   try {
     const {

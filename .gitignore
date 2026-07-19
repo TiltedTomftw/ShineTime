@@ -41,6 +41,9 @@ expo-*.log
 *.db-shm
 *.db-wal
 
+# Claude Code local settings (machine-specific paths + local permissions)
+.claude/settings.local.json
+
 # typescript
 *.tsbuildinfo
 

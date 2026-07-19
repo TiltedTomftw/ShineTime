@@ -1,5 +1,14 @@
 import React from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useAuth } from '../context/AuthContext';
 
 export default function ProfileSetupScreen() {
@@ -42,7 +51,11 @@ export default function ProfileSetupScreen() {
           editable={!saving}
         />
 
-        <TouchableOpacity style={styles.primaryButton} onPress={handleSave} disabled={saving || !name.trim()}>
+        <TouchableOpacity
+          style={styles.primaryButton}
+          onPress={handleSave}
+          disabled={saving || !name.trim()}
+        >
           <Text style={styles.primaryButtonText}>{saving ? 'Creating...' : 'Create User'}</Text>
         </TouchableOpacity>
 
