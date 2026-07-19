@@ -1,0 +1,13 @@
+# Normalize line endings: store text as LF in the repo; let git handle checkout.
+# Prevents the "LF will be replaced by CRLF" churn and keeps prettier happy.
+* text=auto eol=lf
+
+# Binary assets — never touch these.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.jks binary
+*.keystore binary

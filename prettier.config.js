@@ -7,4 +7,7 @@ module.exports = {
   printWidth: 100,
   tabWidth: 2,
   arrowParens: 'always',
+  // Accept either line ending so `format:check` passes on Windows (CRLF working
+  // tree via git autocrlf) and CI (LF) alike. .gitattributes keeps the repo LF.
+  endOfLine: 'auto',
 };
