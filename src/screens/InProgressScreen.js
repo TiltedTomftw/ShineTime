@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { getAllJobs, getDetailerName } from '../services/storage';
-import { computeLiveElapsed } from '../services/jobLogic';
+import { getAllJobs, getDetailerName, getActiveOperationalUserId } from '../services/storage';
+import { computeLiveElapsed, jobBelongsToOperator } from '../services/jobLogic';
 import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
 import { VehicleSummary } from '../components/VehicleSummary';
@@ -12,10 +12,14 @@ export default function InProgressScreen({ navigation }) {
 
   const loadJobs = async () => {
     const allJobs = await getAllJobs();
-    const currentUser = await getDetailerName();
-    const userJobs = allJobs.filter((job) => job.detailerName === currentUser);
-    const activeJobs = userJobs.filter(
-      (job) => job.status === 'in_progress' || job.status === 'paused',
+    const [currentName, currentId] = await Promise.all([
+      getDetailerName(),
+      getActiveOperationalUserId(),
+    ]);
+    const activeJobs = allJobs.filter(
+      (job) =>
+        jobBelongsToOperator(job, currentId, currentName) &&
+        (job.status === 'in_progress' || job.status === 'paused'),
     );
     setJobs(activeJobs);
   };

@@ -113,6 +113,18 @@ const computeLiveElapsed = (job, now = Date.now()) => {
   return elapsed > 0 ? elapsed : 0;
 };
 
+// Whether a job belongs to the given operator. Prefers a stable operational-user
+// id match; falls back to detailer-name equality only for legacy jobs created
+// before ids were stamped. Fixes the "two detailers named Mike collide" bug for
+// all new jobs.
+const jobBelongsToOperator = (job, operatorId, operatorName) => {
+  if (!job) return false;
+  if (operatorId && job.operationalUserId) {
+    return job.operationalUserId === operatorId;
+  }
+  return (job.detailerName || '') === (operatorName || '');
+};
+
 module.exports = {
   sanitizeInput,
   ensureArray,
@@ -121,4 +133,5 @@ module.exports = {
   mergeJobsPreferLocalIfNewer,
   isRemoteNewer,
   computeLiveElapsed,
+  jobBelongsToOperator,
 };

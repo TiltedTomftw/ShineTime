@@ -8,6 +8,7 @@ const {
   mergeJobsPreferLocalIfNewer,
   isRemoteNewer,
   computeLiveElapsed,
+  jobBelongsToOperator,
 } = require('../src/services/jobLogic');
 
 // --- sanitizeInput (trim + clamp; no tag stripping) -----------------------
@@ -233,4 +234,29 @@ test('computeLiveElapsed clamps negative (clock skew) to 0', () => {
 
 test('computeLiveElapsed handles a null job', () => {
   assert.strictEqual(computeLiveElapsed(null, 1000), 0);
+});
+
+// --- jobBelongsToOperator (stable id scoping) -----------------------------
+
+test('jobBelongsToOperator matches on operational-user id when present', () => {
+  const job = { operationalUserId: 'u1', detailerName: 'Mike' };
+  assert.strictEqual(jobBelongsToOperator(job, 'u1', 'Someone Else'), true);
+  assert.strictEqual(jobBelongsToOperator(job, 'u2', 'Mike'), false);
+});
+
+test('jobBelongsToOperator does NOT collide two same-named detailers by id', () => {
+  const mikeA = { operationalUserId: 'a', detailerName: 'Mike' };
+  const mikeB = { operationalUserId: 'b', detailerName: 'Mike' };
+  assert.strictEqual(jobBelongsToOperator(mikeA, 'a', 'Mike'), true);
+  assert.strictEqual(jobBelongsToOperator(mikeB, 'a', 'Mike'), false);
+});
+
+test('jobBelongsToOperator falls back to name for legacy jobs without an id', () => {
+  const legacy = { detailerName: 'Mike' };
+  assert.strictEqual(jobBelongsToOperator(legacy, 'u1', 'Mike'), true);
+  assert.strictEqual(jobBelongsToOperator(legacy, 'u1', 'Dave'), false);
+});
+
+test('jobBelongsToOperator handles a null job', () => {
+  assert.strictEqual(jobBelongsToOperator(null, 'u1', 'Mike'), false);
 });

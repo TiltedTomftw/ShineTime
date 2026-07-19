@@ -16,6 +16,7 @@ const STORAGE_KEYS = {
   DETAILER_NAME: '@detailtracker_detailer_name',
   ACTIVE_DEALERSHIP_ID: '@detailtracker_active_dealership_id',
   ACTIVE_OPERATIONAL_ROLE: '@detailtracker_active_operational_role',
+  OPERATIONAL_USER_ID: '@detailtracker_active_operational_user_id',
   PENDING_JOBS: '@detailtracker_pending_jobs',
 };
 
@@ -330,6 +331,12 @@ export const getDetailerName = async () => {
   return await AsyncStorage.getItem(STORAGE_KEYS.DETAILER_NAME);
 };
 
+// Stable id of the active operational (name+PIN) user, set by AuthContext. Used
+// to attribute and scope jobs by id rather than a mutable free-text name.
+export const getActiveOperationalUserId = async () => {
+  return AsyncStorage.getItem(STORAGE_KEYS.OPERATIONAL_USER_ID);
+};
+
 const shouldScopeJobsToCurrentDetailer = async () => {
   const role = (
     (await AsyncStorage.getItem(STORAGE_KEYS.ACTIVE_OPERATIONAL_ROLE)) || ''
@@ -513,6 +520,7 @@ const findJobWithRecovery = async (jobId) => {
 export const createJob = async (vehicleData) => {
   const deviceId = await getDeviceId();
   const detailerName = await getDetailerName();
+  const operationalUserId = await getActiveOperationalUserId();
   const now = Date.now();
 
   // Sanitize all vehicle data inputs
@@ -532,6 +540,7 @@ export const createJob = async (vehicleData) => {
     jobId,
     deviceId,
     detailerName: detailerName || 'Unknown',
+    operationalUserId: operationalUserId || null,
     detailers,
     startTime: now,
     currentDetailerStartTime: now,

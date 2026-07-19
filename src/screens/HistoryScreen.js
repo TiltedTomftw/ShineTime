@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { getAllJobs, getDetailerName } from '../services/storage';
-import { computeLiveElapsed } from '../services/jobLogic';
+import { getAllJobs, getDetailerName, getActiveOperationalUserId } from '../services/storage';
+import { computeLiveElapsed, jobBelongsToOperator } from '../services/jobLogic';
 import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
 import { VehicleSummary } from '../components/VehicleSummary';
@@ -11,9 +11,12 @@ export default function HistoryScreen({ navigation }) {
 
   const loadJobs = async () => {
     const allJobs = await getAllJobs();
-    const currentUser = await getDetailerName();
-    // Filter to only show current user's jobs
-    const userJobs = allJobs.filter((job) => job.detailerName === currentUser);
+    const [currentName, currentId] = await Promise.all([
+      getDetailerName(),
+      getActiveOperationalUserId(),
+    ]);
+    // Scope to the current operator by stable id (falls back to name for legacy jobs).
+    const userJobs = allJobs.filter((job) => jobBelongsToOperator(job, currentId, currentName));
     setJobs(userJobs);
   };
 

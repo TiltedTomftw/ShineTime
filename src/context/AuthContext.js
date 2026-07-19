@@ -7,6 +7,9 @@ const LEGACY_DETAILER_NAME_KEY = '@detailtracker_detailer_name';
 const ACTIVE_OPERATIONAL_ROLE_PREFIX = '@detailtracker_active_operational_role';
 const ACTIVE_OPERATIONAL_USER_PREFIX = '@detailtracker_active_operational_user';
 const DEALERSHIP_USERS_PREFIX = '@detailtracker_dealership_users';
+// Stable id of the active operational (name+PIN) user, so jobs can be attributed
+// and scoped by id instead of a mutable free-text name. storage.js reads this key.
+const ACTIVE_OPERATIONAL_USER_ID_KEY = '@detailtracker_active_operational_user_id';
 
 const AuthContext = React.createContext(null);
 
@@ -76,6 +79,7 @@ export function AuthProvider({ children }) {
     setActiveOperationalUser(null);
     await AsyncStorage.removeItem(ACTIVE_DEALERSHIP_KEY);
     await AsyncStorage.removeItem(LEGACY_DETAILER_NAME_KEY);
+    await AsyncStorage.removeItem(ACTIVE_OPERATIONAL_USER_ID_KEY);
   }, []);
 
   const refreshOperationalState = React.useCallback(
@@ -104,6 +108,11 @@ export function AuthProvider({ children }) {
       setActiveOperationalUser(user && user.name ? user : null);
       if (user?.name) {
         await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, user.name);
+      }
+      if (user?.id) {
+        await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, user.id);
+      } else {
+        await AsyncStorage.removeItem(ACTIVE_OPERATIONAL_USER_ID_KEY);
       }
     },
     [],
@@ -317,6 +326,7 @@ export function AuthProvider({ children }) {
           JSON.stringify(newUser),
         );
         await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, sanitizedName);
+        await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, newUser.id);
         return newUser;
       }
 
@@ -334,6 +344,7 @@ export function AuthProvider({ children }) {
         JSON.stringify(existing),
       );
       await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, existing.name || sanitizedName);
+      await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, existing.id);
       return existing;
     },
     [session?.user?.id, activeDealership?.dealershipId, activeOperationalRole],
