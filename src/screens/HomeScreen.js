@@ -37,7 +37,7 @@ export default function HomeScreen({ navigation }) {
       return () => {
         active = false;
       };
-    }, [])
+    }, []),
   );
 
   return (
@@ -45,7 +45,9 @@ export default function HomeScreen({ navigation }) {
       <View style={styles.header}>
         <Text style={styles.title}>Shinetime</Text>
         <Text style={styles.subtitle}>
-          {isManager ? `${activeDealership?.dealership?.name || 'Dealership'} Manager Dashboard` : 'Detailer Dashboard'}
+          {isManager
+            ? `${activeDealership?.dealership?.name || 'Dealership'} Manager Dashboard`
+            : 'Detailer Dashboard'}
         </Text>
       </View>
 
@@ -54,15 +56,14 @@ export default function HomeScreen({ navigation }) {
           <Text style={styles.statValue}>{stats.completed}</Text>
           <Text style={styles.statLabel}>Completed</Text>
         </View>
-        <TouchableOpacity
-          style={styles.statCard}
-          onPress={() => navigation.navigate('InProgress')}
-        >
+        <TouchableOpacity style={styles.statCard} onPress={() => navigation.navigate('InProgress')}>
           <Text style={styles.statValue}>{stats.inProgress}</Text>
           <Text style={styles.statLabel}>{isManager ? 'Active' : 'In Progress'}</Text>
         </TouchableOpacity>
         <View style={styles.statCard}>
-          <Text style={styles.statValue}>{isManager ? pausedCount : (Math.round(stats.avgTime / 60000) || '--')}</Text>
+          <Text style={styles.statValue}>
+            {isManager ? pausedCount : Math.round(stats.avgTime / 60000) || '--'}
+          </Text>
           <Text style={styles.statLabel}>{isManager ? 'Paused' : 'Avg Time (min)'}</Text>
         </View>
       </View>
@@ -90,9 +91,17 @@ export default function HomeScreen({ navigation }) {
               >
                 <View style={styles.managerRowLeft}>
                   <Text style={styles.managerVehicle}>{vehicleTitle(job)}</Text>
-                  <Text style={styles.managerMeta}>{[vehicleDescription(job), job.detailerName || 'Unknown', job.status || 'queued'].filter(Boolean).join('  ·  ')}</Text>
+                  <Text style={styles.managerMeta}>
+                    {[
+                      vehicleDescription(job),
+                      job.detailerName || 'Unknown',
+                      job.status || 'queued',
+                    ]
+                      .filter(Boolean)
+                      .join('  ·  ')}
+                  </Text>
                 </View>
-                <Text style={styles.managerChevron}>></Text>
+                <Text style={styles.managerChevron}>{'>'}</Text>
               </TouchableOpacity>
             ))
           )}
@@ -119,14 +128,13 @@ export default function HomeScreen({ navigation }) {
         style={styles.secondaryButton}
         onPress={() => navigation.navigate('History')}
       >
-        <Text style={styles.secondaryButtonText}>{isManager ? 'View All Dealership Jobs' : 'View Job History'}</Text>
+        <Text style={styles.secondaryButtonText}>
+          {isManager ? 'View All Dealership Jobs' : 'View Job History'}
+        </Text>
       </TouchableOpacity>
 
       {!isManager && (
-        <TouchableOpacity
-          style={styles.changeRoleButton}
-          onPress={signOut}
-        >
+        <TouchableOpacity style={styles.changeRoleButton} onPress={signOut}>
           <Text style={styles.changeRoleButtonText}>Log Out</Text>
         </TouchableOpacity>
       )}

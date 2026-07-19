@@ -11,14 +11,14 @@ export default function HistoryScreen({ navigation }) {
     const allJobs = await getAllJobs();
     const currentUser = await getDetailerName();
     // Filter to only show current user's jobs
-    const userJobs = allJobs.filter(job => job.detailerName === currentUser);
+    const userJobs = allJobs.filter((job) => job.detailerName === currentUser);
     setJobs(userJobs);
   };
 
   useFocusEffect(
     React.useCallback(() => {
       loadJobs();
-    }, [])
+    }, []),
   );
 
   return (
@@ -34,30 +34,32 @@ export default function HistoryScreen({ navigation }) {
           data={jobs}
           keyExtractor={(item) => item.jobId}
           renderItem={({ item }) => (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={styles.jobCard}
               onPress={() => navigation.navigate('JobDetail', { jobId: item.jobId })}
             >
               <View style={styles.jobHeader}>
                 <VehicleSummary job={item} style={{ flex: 1, marginRight: 8 }} />
-                <View style={[styles.statusBadge,
-                  item.status === 'completed' ? styles.statusCompleted :
-                  item.status === 'paused' ? styles.statusPaused :
-                  styles.statusInProgress
-                ]}>
+                <View
+                  style={[
+                    styles.statusBadge,
+                    item.status === 'completed'
+                      ? styles.statusCompleted
+                      : item.status === 'paused'
+                        ? styles.statusPaused
+                        : styles.statusInProgress,
+                  ]}
+                >
                   <Text style={styles.statusText}>
                     {item.status === 'completed' ? '✓' : item.status === 'paused' ? '⏸' : '⏱'}
                   </Text>
                 </View>
               </View>
-              <Text style={styles.jobDetail}>
-                {item.detailerName || 'Unknown detailer'}
-              </Text>
+              <Text style={styles.jobDetail}>{item.detailerName || 'Unknown detailer'}</Text>
               <Text style={styles.jobDetail}>
                 {item.status === 'completed'
                   ? `Completed: ${formatTime(item.totalActiveTime)}`
-                  : `In progress: ${formatTime(getElapsedTime(item))}`
-                }
+                  : `In progress: ${formatTime(getElapsedTime(item))}`}
               </Text>
             </TouchableOpacity>
           )}
@@ -69,12 +71,14 @@ export default function HistoryScreen({ navigation }) {
 
 function getElapsedTime(job) {
   const now = Date.now();
-  const lastPause = job.pauseEvents && job.pauseEvents.length > 0
-    ? job.pauseEvents[job.pauseEvents.length - 1]
-    : null;
-  const currentPauseDuration = job.status === 'paused' && lastPause && lastPause.type === 'pause'
-    ? now - lastPause.timestamp
-    : 0;
+  const lastPause =
+    job.pauseEvents && job.pauseEvents.length > 0
+      ? job.pauseEvents[job.pauseEvents.length - 1]
+      : null;
+  const currentPauseDuration =
+    job.status === 'paused' && lastPause && lastPause.type === 'pause'
+      ? now - lastPause.timestamp
+      : 0;
   return now - job.startTime - job.totalPauseTime - currentPauseDuration;
 }
 

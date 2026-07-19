@@ -1,7 +1,28 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, ActivityIndicator, Modal, TextInput, Image, Platform, FlatList, Dimensions } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  Modal,
+  TextInput,
+  Image,
+  Platform,
+  FlatList,
+  Dimensions,
+} from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { getJobById, pauseJob, resumeJob, completeJob, addJobNote, addJobPhoto } from '../services/storage';
+import {
+  getJobById,
+  pauseJob,
+  resumeJob,
+  completeJob,
+  addJobNote,
+  addJobPhoto,
+} from '../services/storage';
 import { vehicleDescription } from '../components/VehicleSummary';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
@@ -20,7 +41,7 @@ export default function JobDetailScreen({ route, navigation }) {
   const [showPhotoModal, setShowPhotoModal] = React.useState(false);
   const [activePhotoIndex, setActivePhotoIndex] = React.useState(0);
 
-  const photoUrls = (job?.photos || []).map(photo => photo.url);
+  const photoUrls = (job?.photos || []).map((photo) => photo.url);
 
   const loadJob = async () => {
     const jobData = await getJobById(jobId);
@@ -30,7 +51,7 @@ export default function JobDetailScreen({ route, navigation }) {
   useFocusEffect(
     React.useCallback(() => {
       loadJob();
-    }, [jobId])
+    }, [jobId]),
   );
 
   const handlePause = async () => {
@@ -53,7 +74,7 @@ export default function JobDetailScreen({ route, navigation }) {
           }
           setLoading(false);
         },
-        'plain-text'
+        'plain-text',
       );
     } else {
       setPauseNoteText('');
@@ -195,12 +216,14 @@ export default function JobDetailScreen({ route, navigation }) {
   }
 
   const now = Date.now();
-  const lastPause = job.pauseEvents && job.pauseEvents.length > 0
-    ? job.pauseEvents[job.pauseEvents.length - 1]
-    : null;
-  const currentPauseDuration = job.status === 'paused' && lastPause && lastPause.type === 'pause'
-    ? now - lastPause.timestamp
-    : 0;
+  const lastPause =
+    job.pauseEvents && job.pauseEvents.length > 0
+      ? job.pauseEvents[job.pauseEvents.length - 1]
+      : null;
+  const currentPauseDuration =
+    job.status === 'paused' && lastPause && lastPause.type === 'pause'
+      ? now - lastPause.timestamp
+      : 0;
   const elapsedTime = now - job.startTime - job.totalPauseTime - currentPauseDuration;
   const isPaused = job.status === 'paused';
   const isCompleted = job.status === 'completed';
@@ -209,11 +232,16 @@ export default function JobDetailScreen({ route, navigation }) {
     <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
       <View style={styles.section}>
         <View style={styles.statusHeader}>
-          <View style={[styles.statusBadge, 
-            isCompleted ? styles.statusCompleted : 
-            isPaused ? styles.statusPaused : 
-            styles.statusInProgress
-          ]}>
+          <View
+            style={[
+              styles.statusBadge,
+              isCompleted
+                ? styles.statusCompleted
+                : isPaused
+                  ? styles.statusPaused
+                  : styles.statusInProgress,
+            ]}
+          >
             <Text style={styles.statusText}>
               {isCompleted ? '✓ Completed' : isPaused ? '⏸ Paused' : '⏱ In Progress'}
             </Text>
@@ -222,24 +250,30 @@ export default function JobDetailScreen({ route, navigation }) {
 
         {/* Vehicle Info — Stock #, then Year Make Model · Color, then VIN (optional) */}
         {job.stockNumber ? <Text style={styles.vehicleText}>Stock #{job.stockNumber}</Text> : null}
-        {!!vehicleDescription(job) && <Text style={styles.infoText}>{vehicleDescription(job)}</Text>}
-        {job.vin ? <Text style={[styles.infoText, { color: '#999', fontSize: 13, marginTop: 2 }]}>VIN · {job.vin}</Text> : null}
-        
+        {!!vehicleDescription(job) && (
+          <Text style={styles.infoText}>{vehicleDescription(job)}</Text>
+        )}
+        {job.vin ? (
+          <Text style={[styles.infoText, { color: '#999', fontSize: 13, marginTop: 2 }]}>
+            VIN · {job.vin}
+          </Text>
+        ) : null}
+
         {/* Job Info */}
         <View style={styles.divider} />
         <Text style={styles.infoText}>
-          Detailer{job.detailers && job.detailers.length > 1 ? 's' : ''}: {' '}
+          Detailer{job.detailers && job.detailers.length > 1 ? 's' : ''}:{' '}
           <Text style={styles.boldText}>
-            {job.detailers && job.detailers.length > 1 
-              ? job.detailers.join(' → ') 
-              : (job.detailerName || 'Unknown')}
+            {job.detailers && job.detailers.length > 1
+              ? job.detailers.join(' → ')
+              : job.detailerName || 'Unknown'}
           </Text>
         </Text>
         <Text style={styles.infoText}>Started: {new Date(job.startTime).toLocaleString()}</Text>
         {isCompleted && job.endTime ? (
           <Text style={styles.infoText}>Completed: {new Date(job.endTime).toLocaleString()}</Text>
         ) : null}
-        
+
         {/* Time Tracking */}
         <View style={styles.divider} />
         {isCompleted ? (
@@ -250,7 +284,7 @@ export default function JobDetailScreen({ route, navigation }) {
         {job.totalPauseTime > 0 && (
           <Text style={styles.infoText}>Pause Time: {formatTime(job.totalPauseTime)}</Text>
         )}
-        
+
         {job.detailerTimeTracking && Object.keys(job.detailerTimeTracking).length > 1 && (
           <View style={styles.detailerTimeBreakdown}>
             <Text style={styles.smallLabel}>Time per Detailer:</Text>
@@ -278,8 +312,11 @@ export default function JobDetailScreen({ route, navigation }) {
                   <Text style={styles.buttonText}>⏸ Pause</Text>
                 </TouchableOpacity>
               )}
-              
-              <TouchableOpacity style={styles.completeButton} onPress={() => setShowCompleteModal(true)}>
+
+              <TouchableOpacity
+                style={styles.completeButton}
+                onPress={() => setShowCompleteModal(true)}
+              >
                 <Text style={styles.buttonText}>✓ Complete Job</Text>
               </TouchableOpacity>
             </>
@@ -324,7 +361,11 @@ export default function JobDetailScreen({ route, navigation }) {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Photos</Text>
         {!isCompleted && !isManager && (
-          <TouchableOpacity style={styles.photoButton} onPress={handleAddPhoto} disabled={photoLoading}>
+          <TouchableOpacity
+            style={styles.photoButton}
+            onPress={handleAddPhoto}
+            disabled={photoLoading}
+          >
             {photoLoading ? (
               <ActivityIndicator color="#fff" />
             ) : (
@@ -341,10 +382,7 @@ export default function JobDetailScreen({ route, navigation }) {
                   key={`${photo.timestamp}-${index}`}
                   onPress={() => handleOpenPhoto(photo.url, index)}
                 >
-                  <Image
-                    source={{ uri: thumbUrl }}
-                    style={styles.photoThumb}
-                  />
+                  <Image source={{ uri: thumbUrl }} style={styles.photoThumb} />
                 </TouchableOpacity>
               );
             })}
@@ -365,7 +403,10 @@ export default function JobDetailScreen({ route, navigation }) {
                   {formatTimestamp(event.timestamp)} · {event.detailerName || 'Unknown'}
                 </Text>
                 <Text style={styles.custodyText}>Action: {formatCustodyAction(event.type)}</Text>
-                {event.type !== 'resume' && event.type !== 'start' && event.type !== 'complete' && event.note ? (
+                {event.type !== 'resume' &&
+                event.type !== 'start' &&
+                event.type !== 'complete' &&
+                event.note ? (
                   <Text style={styles.custodyNote}>Note: {event.note}</Text>
                 ) : null}
               </View>
@@ -385,18 +426,18 @@ export default function JobDetailScreen({ route, navigation }) {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Complete Job?</Text>
             <Text style={styles.modalText}>Mark this job as completed?</Text>
-            
+
             <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={styles.modalButtonCancel} 
+              <TouchableOpacity
+                style={styles.modalButtonCancel}
                 onPress={() => setShowCompleteModal(false)}
                 disabled={loading}
               >
                 <Text style={styles.modalButtonTextCancel}>Cancel</Text>
               </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalButtonConfirm} 
+
+              <TouchableOpacity
+                style={styles.modalButtonConfirm}
                 onPress={handleComplete}
                 disabled={loading}
               >
@@ -460,10 +501,7 @@ export default function JobDetailScreen({ route, navigation }) {
         onRequestClose={() => setShowPhotoModal(false)}
       >
         <View style={styles.photoModalOverlay}>
-          <TouchableOpacity
-            style={styles.photoModalClose}
-            onPress={() => setShowPhotoModal(false)}
-          >
+          <TouchableOpacity style={styles.photoModalClose} onPress={() => setShowPhotoModal(false)}>
             <Text style={styles.photoModalCloseText}>×</Text>
           </TouchableOpacity>
           <FlatList
@@ -502,7 +540,7 @@ function formatTime(ms) {
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  
+
   if (hours > 0) {
     return `${hours}h ${minutes}m`;
   }

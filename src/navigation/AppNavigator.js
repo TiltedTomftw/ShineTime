@@ -25,26 +25,14 @@ export default function AppNavigator() {
           },
         }}
       >
-        <Stack.Screen 
-          name="Home" 
-          component={HomeScreen}
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen 
-          name="NewJob" 
-          component={NewJobScreen}
-          options={{ title: 'New Job' }}
-        />
-        <Stack.Screen 
-          name="InProgress" 
+        <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+        <Stack.Screen name="NewJob" component={NewJobScreen} options={{ title: 'New Job' }} />
+        <Stack.Screen
+          name="InProgress"
           component={InProgressScreen}
           options={{ title: 'In Progress' }}
         />
-        <Stack.Screen 
-          name="History" 
-          component={HistoryScreen}
-          options={{ title: 'All Jobs' }}
-        />
+        <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'All Jobs' }} />
         <Stack.Screen
           name="JobDetail"
           component={JobDetailScreen}

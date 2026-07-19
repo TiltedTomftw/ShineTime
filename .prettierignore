@@ -1,0 +1,15 @@
+node_modules/
+dist-smoke*/
+.expo/
+dist/
+web-build/
+package-lock.json
+supabase/functions/
+supabase/.temp/
+*.log
+
+# Prose docs and standalone HTML are hand-maintained; keep them out of the
+# code formatter to avoid churn.
+*.md
+*.html
+detailtracker.json

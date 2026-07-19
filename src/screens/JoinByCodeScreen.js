@@ -1,5 +1,14 @@
 import React from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 
@@ -31,7 +40,10 @@ export default function JoinByCodeScreen({ onDone, onBack }) {
   };
 
   return (
-    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       <View style={styles.content}>
         <Text style={styles.title}>Join Dealership</Text>
         <Text style={styles.subtitle}>Enter the invite code your manager gave you.</Text>
@@ -72,8 +84,22 @@ const styles = StyleSheet.create({
   content: { flex: 1, justifyContent: 'center', padding: 24 },
   title: { fontSize: 32, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 8 },
   subtitle: { fontSize: 15, color: '#e0e7ff', textAlign: 'center', marginBottom: 24 },
-  input: { backgroundColor: '#fff', padding: 14, borderRadius: 10, fontSize: 18, letterSpacing: 2, textAlign: 'center', marginBottom: 12 },
-  primaryButton: { backgroundColor: '#fff', borderRadius: 10, padding: 16, alignItems: 'center', marginTop: 6 },
+  input: {
+    backgroundColor: '#fff',
+    padding: 14,
+    borderRadius: 10,
+    fontSize: 18,
+    letterSpacing: 2,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  primaryButton: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 6,
+  },
   disabled: { opacity: 0.6 },
   primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
   linkBtn: { marginTop: 14, alignItems: 'center' },

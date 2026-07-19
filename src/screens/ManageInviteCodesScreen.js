@@ -39,9 +39,7 @@ export default function ManageInviteCodesScreen({ onBack }) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Invite Team</Text>
-      <Text style={styles.subtitle}>
-        {activeDealership?.dealership?.name || 'This dealership'}
-      </Text>
+      <Text style={styles.subtitle}>{activeDealership?.dealership?.name || 'This dealership'}</Text>
 
       <Text style={styles.label}>Role for this code</Text>
       <View style={styles.roleRow}>
@@ -57,14 +55,24 @@ export default function ManageInviteCodesScreen({ onBack }) {
         ))}
       </View>
 
-      <TouchableOpacity style={[styles.primaryButton, loading && styles.disabled]} onPress={handleGenerate} disabled={loading}>
-        {loading ? <ActivityIndicator color="#667eea" /> : <Text style={styles.primaryButtonText}>Generate Code</Text>}
+      <TouchableOpacity
+        style={[styles.primaryButton, loading && styles.disabled]}
+        onPress={handleGenerate}
+        disabled={loading}
+      >
+        {loading ? (
+          <ActivityIndicator color="#667eea" />
+        ) : (
+          <Text style={styles.primaryButtonText}>Generate Code</Text>
+        )}
       </TouchableOpacity>
 
       {!!code && (
         <View style={styles.codeCard}>
           <Text style={styles.codeLabel}>Share this code</Text>
-          <Text selectable style={styles.codeValue}>{code}</Text>
+          <Text selectable style={styles.codeValue}>
+            {code}
+          </Text>
           <Text style={styles.codeHint}>Expires in 7 days. Staff enter it on the Join screen.</Text>
         </View>
       )}
@@ -84,16 +92,44 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 24 },
   label: { fontSize: 13, color: '#666', marginBottom: 8 },
   roleRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
-  roleChip: { flex: 1, paddingVertical: 10, borderRadius: 8, borderWidth: 1, borderColor: '#ccc', alignItems: 'center' },
+  roleChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#ccc',
+    alignItems: 'center',
+  },
   roleChipActive: { backgroundColor: '#667eea', borderColor: '#667eea' },
   roleChipText: { color: '#555', textTransform: 'capitalize', fontWeight: '600' },
   roleChipTextActive: { color: '#fff' },
-  primaryButton: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#667eea', borderRadius: 10, padding: 16, alignItems: 'center' },
+  primaryButton: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#667eea',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
   disabled: { opacity: 0.6 },
   primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
-  codeCard: { marginTop: 20, backgroundColor: '#fff', borderRadius: 12, padding: 20, alignItems: 'center', borderWidth: 1, borderColor: '#e5e7eb' },
+  codeCard: {
+    marginTop: 20,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+  },
   codeLabel: { fontSize: 12, color: '#666' },
-  codeValue: { fontSize: 34, fontWeight: 'bold', color: '#333', letterSpacing: 4, marginVertical: 8 },
+  codeValue: {
+    fontSize: 34,
+    fontWeight: 'bold',
+    color: '#333',
+    letterSpacing: 4,
+    marginVertical: 8,
+  },
   codeHint: { fontSize: 12, color: '#999', textAlign: 'center' },
   linkBtn: { marginTop: 18, alignItems: 'center' },
   linkText: { color: '#667eea', fontWeight: '600' },

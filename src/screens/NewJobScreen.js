@@ -1,5 +1,14 @@
 import React from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator } from 'react-native';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  Alert,
+  ActivityIndicator,
+} from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { createJob } from '../services/storage';
 import { scanVehicleFromImage } from '../services/ocr';
@@ -9,11 +18,7 @@ function Field({ label, ...props }) {
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
-      <TextInput
-        style={styles.fieldInput}
-        placeholderTextColor={colors.textTertiary}
-        {...props}
-      />
+      <TextInput style={styles.fieldInput} placeholderTextColor={colors.textTertiary} {...props} />
     </View>
   );
 }
@@ -30,12 +35,6 @@ export default function NewJobScreen({ navigation }) {
   const [loading, setLoading] = React.useState(false);
   const [scanning, setScanning] = React.useState(false);
   const [scanAttempted, setScanAttempted] = React.useState(false);
-
-  React.useEffect(() => {
-    if (!scanAttempted) {
-      handleScanKeytag();
-    }
-  }, [scanAttempted]);
 
   const handleScanKeytag = async () => {
     try {
@@ -61,14 +60,20 @@ export default function NewJobScreen({ navigation }) {
         return;
       }
 
-      const ocr = await scanVehicleFromImage({ base64: asset.base64, mimeType: asset.mimeType || 'image/jpeg' });
+      const ocr = await scanVehicleFromImage({
+        base64: asset.base64,
+        mimeType: asset.mimeType || 'image/jpeg',
+      });
       setVehicle({
         stockNumber: (ocr.stockNumber || '').toUpperCase().slice(0, 50),
         year: (ocr.year || '').slice(0, 4),
         make: (ocr.make || '').slice(0, 50),
         model: (ocr.model || '').slice(0, 50),
         color: (ocr.color || '').slice(0, 30),
-        vin: (ocr.vin || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17),
+        vin: (ocr.vin || '')
+          .toUpperCase()
+          .replace(/[^A-Z0-9]/g, '')
+          .slice(0, 17),
       });
     } catch (error) {
       const message = error?.message || 'Scan failed';
@@ -81,7 +86,16 @@ export default function NewJobScreen({ navigation }) {
     }
   };
 
-  const set = (key, transform) => (text) => setVehicle((v) => ({ ...v, [key]: transform ? transform(text) : text }));
+  // Auto-launch the keytag scan once on mount (declared after handleScanKeytag
+  // so the effect references an already-initialized function).
+  React.useEffect(() => {
+    if (!scanAttempted) {
+      handleScanKeytag();
+    }
+  }, [scanAttempted]);
+
+  const set = (key, transform) => (text) =>
+    setVehicle((v) => ({ ...v, [key]: transform ? transform(text) : text }));
 
   const handleStartJob = async () => {
     if (!vehicle.stockNumber.trim()) {
@@ -101,7 +115,11 @@ export default function NewJobScreen({ navigation }) {
   const canStart = vehicle.stockNumber.trim().length > 0 && !loading && !scanning;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      keyboardShouldPersistTaps="handled"
+    >
       <TouchableOpacity
         style={[styles.scanButton, scanning && styles.scanButtonBusy]}
         onPress={handleScanKeytag}
@@ -114,7 +132,9 @@ export default function NewJobScreen({ navigation }) {
           <Text style={styles.scanButtonText}>Scan Keytag</Text>
         )}
       </TouchableOpacity>
-      <Text style={styles.hint}>Point at the keytag or window sticker, or enter details below.</Text>
+      <Text style={styles.hint}>
+        Point at the keytag or window sticker, or enter details below.
+      </Text>
 
       <View style={styles.card}>
         <Field
@@ -134,11 +154,26 @@ export default function NewJobScreen({ navigation }) {
           placeholder="—"
         />
         <View style={styles.separator} />
-        <Field label="Make" value={vehicle.make} onChangeText={set('make', (t) => t.slice(0, 50))} placeholder="—" />
+        <Field
+          label="Make"
+          value={vehicle.make}
+          onChangeText={set('make', (t) => t.slice(0, 50))}
+          placeholder="—"
+        />
         <View style={styles.separator} />
-        <Field label="Model" value={vehicle.model} onChangeText={set('model', (t) => t.slice(0, 50))} placeholder="—" />
+        <Field
+          label="Model"
+          value={vehicle.model}
+          onChangeText={set('model', (t) => t.slice(0, 50))}
+          placeholder="—"
+        />
         <View style={styles.separator} />
-        <Field label="Color" value={vehicle.color} onChangeText={set('color', (t) => t.slice(0, 30))} placeholder="—" />
+        <Field
+          label="Color"
+          value={vehicle.color}
+          onChangeText={set('color', (t) => t.slice(0, 30))}
+          placeholder="—"
+        />
       </View>
 
       <Text style={styles.groupLabel}>OPTIONAL</Text>
@@ -146,7 +181,12 @@ export default function NewJobScreen({ navigation }) {
         <Field
           label="VIN"
           value={vehicle.vin}
-          onChangeText={set('vin', (t) => t.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17))}
+          onChangeText={set('vin', (t) =>
+            t
+              .toUpperCase()
+              .replace(/[^A-Z0-9]/g, '')
+              .slice(0, 17),
+          )}
           autoCapitalize="characters"
           autoCorrect={false}
           placeholder="17 characters"
@@ -159,7 +199,11 @@ export default function NewJobScreen({ navigation }) {
         disabled={!canStart}
         activeOpacity={0.85}
       >
-        {loading ? <ActivityIndicator color={colors.onAccent} /> : <Text style={styles.startButtonText}>Begin Detailing</Text>}
+        {loading ? (
+          <ActivityIndicator color={colors.onAccent} />
+        ) : (
+          <Text style={styles.startButtonText}>Begin Detailing</Text>
+        )}
       </TouchableOpacity>
     </ScrollView>
   );
@@ -178,7 +222,12 @@ const styles = StyleSheet.create({
   scanButtonBusy: { opacity: 0.7 },
   scanButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '600' },
   hint: { ...type.footnote, textAlign: 'center', marginTop: spacing.sm, marginBottom: spacing.lg },
-  groupLabel: { ...type.label, marginTop: spacing.lg, marginBottom: spacing.sm, marginLeft: spacing.sm },
+  groupLabel: {
+    ...type.label,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+    marginLeft: spacing.sm,
+  },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,
@@ -188,7 +237,11 @@ const styles = StyleSheet.create({
   field: { flexDirection: 'row', alignItems: 'center', minHeight: 52 },
   fieldLabel: { ...type.body, color: colors.textSecondary, width: 84 },
   fieldInput: { ...type.body, flex: 1, paddingVertical: 12, textAlign: 'right' },
-  separator: { height: StyleSheet.hairlineWidth, backgroundColor: colors.separator, marginLeft: 84 },
+  separator: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.separator,
+    marginLeft: 84,
+  },
   startButton: {
     backgroundColor: colors.accent,
     borderRadius: radius.md,
@@ -197,6 +250,9 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     ...shadow.card,
   },
-  startButtonDisabled: { backgroundColor: colors.textTertiary, ...({ shadowOpacity: 0, elevation: 0 }) },
+  startButtonDisabled: {
+    backgroundColor: colors.textTertiary,
+    ...{ shadowOpacity: 0, elevation: 0 },
+  },
   startButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '600' },
 });

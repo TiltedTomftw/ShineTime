@@ -1,5 +1,14 @@
 import React from 'react';
-import { Alert, KeyboardAvoidingView, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import {
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useAuth } from '../context/AuthContext';
 
 export default function UserPinScreen() {
@@ -53,15 +62,25 @@ export default function UserPinScreen() {
         />
 
         <TouchableOpacity
-          style={[styles.primaryButton, (!name.trim() || pin.length < 4 || submitting) && styles.primaryDisabled]}
+          style={[
+            styles.primaryButton,
+            (!name.trim() || pin.length < 4 || submitting) && styles.primaryDisabled,
+          ]}
           onPress={handleSubmit}
           disabled={!name.trim() || pin.length < 4 || submitting}
         >
-          <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : (mode === 'create' ? 'Create User' : 'Login')}</Text>
+          <Text style={styles.primaryButtonText}>
+            {submitting ? 'Please wait...' : mode === 'create' ? 'Create User' : 'Login'}
+          </Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.linkBtn} onPress={() => setMode(mode === 'create' ? 'login' : 'create')}>
-          <Text style={styles.linkText}>{mode === 'create' ? 'Have a user already? Login' : 'Need a new user? Create one'}</Text>
+        <TouchableOpacity
+          style={styles.linkBtn}
+          onPress={() => setMode(mode === 'create' ? 'login' : 'create')}
+        >
+          <Text style={styles.linkText}>
+            {mode === 'create' ? 'Have a user already? Login' : 'Need a new user? Create one'}
+          </Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.linkBtn} onPress={signOut}>

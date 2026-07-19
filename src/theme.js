@@ -3,14 +3,14 @@
 // on weight/size/spacing rather than custom fonts.
 
 export const colors = {
-  bg: '#F2F2F7',          // iOS grouped background
+  bg: '#F2F2F7', // iOS grouped background
   card: '#FFFFFF',
   cardBorder: '#E5E5EA',
   separator: '#E5E5EA',
-  text: '#1C1C1E',        // primary label
+  text: '#1C1C1E', // primary label
   textSecondary: '#6E6E73',
   textTertiary: '#A1A1A6',
-  accent: '#667EEA',      // brand
+  accent: '#667EEA', // brand
   accentSoft: '#EEF0FE',
   onAccent: '#FFFFFF',
   success: '#34C759',
