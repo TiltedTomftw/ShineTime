@@ -934,7 +934,7 @@
       const slowList = document.getElementById('slowJobs');
       slowList.innerHTML = slowJobs.length
         ? slowJobs.map(({ job, duration }) => `
-            <li><span>${escapeHtml(job.stockNumber || 'No Stock')} â€¢ ${escapeHtml(job.make || '')}</span><strong>${formatTime(duration)}</strong></li>
+            <li><span>${escapeHtml(job.stockNumber || 'No Stock')} • ${escapeHtml(job.make || '')}</span><strong>${formatTime(duration)}</strong></li>
           `).join('')
         : '<li><span>No active jobs</span><strong>--</strong></li>';
 
@@ -968,7 +968,7 @@
                 <div class="job-top">
                   <div>
                     <div class="job-title">${escapeHtml(job.make || '?')} ${escapeHtml(job.model || '?')}</div>
-                    <div class="job-subtitle">Stock ${escapeHtml(job.stockNumber || 'N/A')} â€¢ ${escapeHtml(job.year || '----')} ${escapeHtml(job.color || '')}</div>
+                    <div class="job-subtitle">Stock ${escapeHtml(job.stockNumber || 'N/A')} • ${escapeHtml(job.year || '----')} ${escapeHtml(job.color || '')}</div>
                   </div>
                   <div class="status-pill ${escapeHtml(job.status)}">${escapeHtml(job.status.replace('_', ' '))}</div>
                 </div>
@@ -1043,7 +1043,7 @@
       const notesHtml = notes.length
         ? notes.map(note => `
             <div class="timeline-item">
-              <strong>${escapeHtml(note.detailerName || 'Unknown')}</strong> â€¢ ${formatDateTime(note.timestamp)}<br>
+              <strong>${escapeHtml(note.detailerName || 'Unknown')}</strong> • ${formatDateTime(note.timestamp)}<br>
               ${escapeHtml(note.text || '')}
             </div>
           `).join('')
@@ -1052,8 +1052,8 @@
       const custodyHtml = custody.length
         ? [...custody].sort((a, b) => b.timestamp - a.timestamp).map(event => `
             <div class="timeline-item">
-              <strong>${escapeHtml(event.detailerName || 'Unknown')}</strong> â€¢ ${formatDateTime(event.timestamp)}<br>
-              ${escapeHtml(event.type || 'unknown')}${event.note ? ` â€¢ ${escapeHtml(event.note)}` : ''}
+              <strong>${escapeHtml(event.detailerName || 'Unknown')}</strong> • ${formatDateTime(event.timestamp)}<br>
+              ${escapeHtml(event.type || 'unknown')}${event.note ? ` • ${escapeHtml(event.note)}` : ''}
             </div>
           `).join('')
         : '<div class="timeline-item">No custody events yet.</div>';
@@ -1110,7 +1110,7 @@
       const image = document.getElementById('photoModalImage');
       const note = document.getElementById('photoModalNote');
       image.src = photo.url;
-      note.textContent = `${photo.detailerName || 'Unknown'} â€¢ ${formatDateTime(photo.timestamp)}${photo.note ? ` â€¢ ${photo.note}` : ''}`;
+      note.textContent = `${photo.detailerName || 'Unknown'} • ${formatDateTime(photo.timestamp)}${photo.note ? ` • ${photo.note}` : ''}`;
       document.getElementById('photoModal').classList.add('show');
     }
 
