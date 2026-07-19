@@ -187,6 +187,37 @@
       color: var(--muted);
     }
 
+    .insight-list li.clickable {
+      cursor: pointer;
+      padding: 8px 10px;
+      margin: 0 -10px;
+      border-radius: 10px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .insight-list li.clickable:hover {
+      background: rgba(99, 102, 241, 0.09);
+      color: var(--text, #111);
+    }
+
+    .detailer-jobs {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .detailer-job-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: background 0.15s ease;
+    }
+    .detailer-job-row:hover { background: rgba(99, 102, 241, 0.06); }
+
     .panel {
       background: white;
       border-radius: 20px;
@@ -669,6 +700,7 @@
   <script>
     let currentView = 'cards';
     let supabaseClient = null;
+    let dashboardJobs = []; // current job set, so detailer drill-down can filter it
     let dashboardRefreshTimer = null;
 
     // Bucket-hosted dashboard config:
@@ -923,7 +955,7 @@
 
       const topList = document.getElementById('topDetailers');
       topList.innerHTML = topDetailers.length
-        ? topDetailers.map(([name, data]) => `<li><span>${escapeHtml(name)}</span><strong>${data.count} jobs</strong></li>`).join('')
+        ? topDetailers.map(([name, data]) => `<li class="clickable" onclick='showDetailerDetails(${JSON.stringify(name).replace(/'/g, "&apos;")})'><span>${escapeHtml(name)}</span><strong>${data.count} jobs</strong></li>`).join('')
         : '<li><span>No completed jobs yet</span><strong>--</strong></li>';
 
       const slowJobs = active
@@ -934,7 +966,7 @@
       const slowList = document.getElementById('slowJobs');
       slowList.innerHTML = slowJobs.length
         ? slowJobs.map(({ job, duration }) => `
-            <li><span>${escapeHtml(job.stockNumber || 'No Stock')} • ${escapeHtml(job.make || '')}</span><strong>${formatTime(duration)}</strong></li>
+            <li class="clickable" onclick='showJobDetails(${JSON.stringify(job).replace(/'/g, "&apos;")})'><span>${escapeHtml(job.stockNumber || 'No Stock')} • ${escapeHtml(job.make || '')}</span><strong>${formatTime(duration)}</strong></li>
           `).join('')
         : '<li><span>No active jobs</span><strong>--</strong></li>';
 
@@ -1106,6 +1138,54 @@
       document.getElementById('jobModal').classList.add('show');
     }
 
+    function showDetailerDetails(name) {
+      const modalBody = document.getElementById('modalBody');
+      const jobs = dashboardJobs.filter(j =>
+        (Array.isArray(j.detailers) && j.detailers.includes(name)) || j.detailerName === name
+      );
+      const completed = jobs.filter(j => j.status === 'completed');
+      const active = jobs.filter(j => j.status === 'in_progress' || j.status === 'paused');
+      const totalActive = completed.reduce((s, j) => s + (j.totalActiveTime || 0), 0);
+      const avg = completed.length ? totalActive / completed.length : 0;
+      const fastest = completed.reduce(
+        (m, j) => (m === null ? (j.totalActiveTime || 0) : Math.min(m, j.totalActiveTime || 0)),
+        null
+      );
+      const notesCount = jobs.reduce((s, j) => s + (j.notes ? j.notes.length : 0), 0);
+      const photosCount = jobs.reduce((s, j) => s + (j.photos ? j.photos.length : 0), 0);
+
+      const sorted = [...jobs].sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+      const jobsHtml = sorted.length
+        ? sorted.map(job => `
+            <div class="detailer-job-row" onclick='showJobDetails(${JSON.stringify(job).replace(/'/g, "&apos;")})'>
+              <span>${escapeHtml(job.make || '?')} ${escapeHtml(job.model || '')} • ${escapeHtml(job.stockNumber || 'N/A')}</span>
+              <span class="status-pill ${escapeHtml(job.status)}">${escapeHtml(job.status.replace('_', ' '))}</span>
+            </div>
+          `).join('')
+        : '<div class="timeline-item">No jobs for this detailer in the current view.</div>';
+
+      modalBody.innerHTML = `
+        <h2>${escapeHtml(name)}</h2>
+        <div class="modal-grid modal-section">
+          <div class="modal-card"><strong>Total Jobs</strong><br>${jobs.length}</div>
+          <div class="modal-card"><strong>Completed</strong><br>${completed.length}</div>
+          <div class="modal-card"><strong>Active Now</strong><br>${active.length}</div>
+          <div class="modal-card"><strong>Avg Active Time</strong><br>${completed.length ? formatTime(avg) : '--'}</div>
+          <div class="modal-card"><strong>Fastest Job</strong><br>${fastest !== null ? formatTime(fastest) : '--'}</div>
+          <div class="modal-card"><strong>Total Active Time</strong><br>${formatTime(totalActive)}</div>
+          <div class="modal-card"><strong>Notes Logged</strong><br>${notesCount}</div>
+          <div class="modal-card"><strong>Photos Captured</strong><br>${photosCount}</div>
+        </div>
+
+        <div class="modal-section">
+          <h3>Jobs (${jobs.length})</h3>
+          <div class="detailer-jobs">${jobsHtml}</div>
+        </div>
+      `;
+
+      document.getElementById('jobModal').classList.add('show');
+    }
+
     function showPhoto(photo) {
       const image = document.getElementById('photoModalImage');
       const note = document.getElementById('photoModalNote');
@@ -1154,6 +1234,7 @@
           });
         }
 
+        dashboardJobs = jobs;
         document.getElementById('jobCount').textContent = `${jobs.length} jobs`;
 
         const completed = jobs.filter(j => j.status === 'completed');
