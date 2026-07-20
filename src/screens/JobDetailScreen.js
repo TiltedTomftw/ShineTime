@@ -24,6 +24,8 @@ import {
   addJobPhoto,
 } from '../services/storage';
 import { vehicleDescription } from '../components/VehicleSummary';
+import { computeLiveElapsed } from '../services/jobLogic';
+import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 
@@ -40,6 +42,7 @@ export default function JobDetailScreen({ route, navigation }) {
   const [pauseNoteText, setPauseNoteText] = React.useState('');
   const [showPhotoModal, setShowPhotoModal] = React.useState(false);
   const [activePhotoIndex, setActivePhotoIndex] = React.useState(0);
+  const [now, setNow] = React.useState(() => Date.now());
 
   const photoUrls = (job?.photos || []).map((photo) => photo.url);
 
@@ -53,6 +56,14 @@ export default function JobDetailScreen({ route, navigation }) {
       loadJob();
     }, [jobId]),
   );
+
+  // Live-tick the elapsed timer once per second while the job is running, so
+  // the displayed time actually advances instead of freezing until re-render.
+  React.useEffect(() => {
+    if (job?.status !== 'in_progress') return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [job?.status]);
 
   const handlePause = async () => {
     if (isManager) {
@@ -215,16 +226,7 @@ export default function JobDetailScreen({ route, navigation }) {
     );
   }
 
-  const now = Date.now();
-  const lastPause =
-    job.pauseEvents && job.pauseEvents.length > 0
-      ? job.pauseEvents[job.pauseEvents.length - 1]
-      : null;
-  const currentPauseDuration =
-    job.status === 'paused' && lastPause && lastPause.type === 'pause'
-      ? now - lastPause.timestamp
-      : 0;
-  const elapsedTime = now - job.startTime - job.totalPauseTime - currentPauseDuration;
+  const elapsedTime = computeLiveElapsed(job, now);
   const isPaused = job.status === 'paused';
   const isCompleted = job.status === 'completed';
 
@@ -277,12 +279,12 @@ export default function JobDetailScreen({ route, navigation }) {
         {/* Time Tracking */}
         <View style={styles.divider} />
         {isCompleted ? (
-          <Text style={styles.timeText}>Total Time: {formatTime(job.totalActiveTime)}</Text>
+          <Text style={styles.timeText}>Total Time: {formatDuration(job.totalActiveTime)}</Text>
         ) : (
-          <Text style={styles.timeText}>Elapsed: {formatTime(elapsedTime)}</Text>
+          <Text style={styles.timeText}>Elapsed: {formatDuration(elapsedTime)}</Text>
         )}
         {job.totalPauseTime > 0 && (
-          <Text style={styles.infoText}>Pause Time: {formatTime(job.totalPauseTime)}</Text>
+          <Text style={styles.infoText}>Pause Time: {formatDuration(job.totalPauseTime)}</Text>
         )}
 
         {job.detailerTimeTracking && Object.keys(job.detailerTimeTracking).length > 1 && (
@@ -290,7 +292,7 @@ export default function JobDetailScreen({ route, navigation }) {
             <Text style={styles.smallLabel}>Time per Detailer:</Text>
             {Object.entries(job.detailerTimeTracking).map(([detailer, time]) => (
               <Text key={detailer} style={styles.detailerTimeText}>
-                • {detailer}: {formatTime(time)}
+                • {detailer}: {formatDuration(time)}
               </Text>
             ))}
           </View>
@@ -533,18 +535,6 @@ export default function JobDetailScreen({ route, navigation }) {
       </Modal>
     </ScrollView>
   );
-}
-
-function formatTime(ms) {
-  if (!ms) return '0m';
-  const totalMinutes = Math.floor(ms / 60000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-
-  if (hours > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  return `${minutes}m`;
 }
 
 function formatTimestamp(timestamp) {

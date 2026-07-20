@@ -1,6 +1,8 @@
 import React from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
-import { getAllJobs, getDetailerName } from '../services/storage';
+import { getAllJobs, getDetailerName, getActiveOperationalUserId } from '../services/storage';
+import { computeLiveElapsed, jobBelongsToOperator } from '../services/jobLogic';
+import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
 import { VehicleSummary } from '../components/VehicleSummary';
 
@@ -9,9 +11,12 @@ export default function HistoryScreen({ navigation }) {
 
   const loadJobs = async () => {
     const allJobs = await getAllJobs();
-    const currentUser = await getDetailerName();
-    // Filter to only show current user's jobs
-    const userJobs = allJobs.filter((job) => job.detailerName === currentUser);
+    const [currentName, currentId] = await Promise.all([
+      getDetailerName(),
+      getActiveOperationalUserId(),
+    ]);
+    // Scope to the current operator by stable id (falls back to name for legacy jobs).
+    const userJobs = allJobs.filter((job) => jobBelongsToOperator(job, currentId, currentName));
     setJobs(userJobs);
   };
 
@@ -58,8 +63,8 @@ export default function HistoryScreen({ navigation }) {
               <Text style={styles.jobDetail}>{item.detailerName || 'Unknown detailer'}</Text>
               <Text style={styles.jobDetail}>
                 {item.status === 'completed'
-                  ? `Completed: ${formatTime(item.totalActiveTime)}`
-                  : `In progress: ${formatTime(getElapsedTime(item))}`}
+                  ? `Completed: ${formatDuration(item.totalActiveTime)}`
+                  : `In progress: ${formatDuration(computeLiveElapsed(item))}`}
               </Text>
             </TouchableOpacity>
           )}
@@ -67,25 +72,6 @@ export default function HistoryScreen({ navigation }) {
       )}
     </View>
   );
-}
-
-function getElapsedTime(job) {
-  const now = Date.now();
-  const lastPause =
-    job.pauseEvents && job.pauseEvents.length > 0
-      ? job.pauseEvents[job.pauseEvents.length - 1]
-      : null;
-  const currentPauseDuration =
-    job.status === 'paused' && lastPause && lastPause.type === 'pause'
-      ? now - lastPause.timestamp
-      : 0;
-  return now - job.startTime - job.totalPauseTime - currentPauseDuration;
-}
-
-function formatTime(ms) {
-  if (!ms) return '--';
-  const minutes = Math.floor(ms / 60000);
-  return `${minutes} min`;
 }
 
 const styles = StyleSheet.create({

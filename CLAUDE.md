@@ -3,6 +3,33 @@
 Expo / React Native app (SDK 54) backed by Supabase. Full architecture lives in
 [DEVELOPMENT.md](DEVELOPMENT.md); this file is the fast-path context + gotchas.
 
+## Two separate surfaces (read this before touching "the dashboard")
+
+This product ships **two independent front-ends**. Do NOT conflate them:
+
+1. **The mobile app** (this repo's `App.js` / `src/`) — the **detailer** tool.
+   Detailers start/pause/resume/complete jobs, add notes/photos, scan keytags
+   (OCR). A manager can sign in and see a *light* HomeScreen summary ("Recent
+   Jobs" panel), but **the app is not the management tool** — keep the manager
+   HomeScreen minimal.
+
+2. **The manager dashboard** — a JIRA-style **standalone web app** that lives in
+   THIS repo at **`dashboard/index.html`** (one self-contained static file;
+   consolidated from the old `TiltedTomftw/shinetime-dashboard` repo). It is a
+   **separate surface from the RN app** — do NOT rebuild its features inside the
+   HomeScreen; edit `dashboard/index.html` directly. See `dashboard/README.md`.
+   - **Deploy:** auto-published to GitHub Pages by
+     `.github/workflows/deploy-dashboard.yml` on push to `main` (one-time:
+     Settings → Pages → Source → "GitHub Actions").
+   - **Usage:** opened per-dealership via `?d=DEALERSHIP_UUID`; manager signs in
+     (email/password); reads Supabase directly (anon key + RLS).
+   - **Features:** STATUS / DATE-RANGE / DETAILER / free-text SEARCH filters,
+     Cards + Compact-Table views, stat tiles (Completed / Active / Paused / Avg),
+     Top Detailers, Longest Active Jobs, Coverage (notes/photos/custody).
+   - (Superseded copies to ignore: `server/public/manager.html` on branch
+     `feature/supabase-remote-sync`, and the `supabase/functions/manager-dashboard`
+     Edge Function.)
+
 ## Environment (read first)
 
 - **Windows.** Bash tool uses Git Bash at `G:\Git\bin\bash.exe` (wired up via
@@ -34,7 +61,8 @@ CI (`.github/workflows/ci.yml`) runs lint → format:check → tests on every pu
 - `supabase/migrations/` — 001–002 applied; **003 (RLS/PIN) and 004 (onboarding)
   are drafted but NOT applied** (see `docs/PHASE1_HARDENING_NOTES.md`,
   `docs/PHASE2_ONBOARDING_NOTES.md`).
-- `supabase/functions/` — `ocr-vehicle`, `manager-dashboard`.
+- `supabase/functions/` — `ocr-vehicle`, `manager-dashboard` (an older Edge-Function
+  host for the manager page; the live dashboard is now on GitHub Pages — see above).
 
 ## Conventions
 
@@ -48,6 +76,6 @@ CI (`.github/workflows/ci.yml`) runs lint → format:check → tests on every pu
 
 ## Known issues to watch
 
-- Dependency drift vs SDK 54: `expo-image-picker` is pinned `^55.0.13` but the SDK
-  expects `~17.0.10` — verify photo capture before trusting it. `expo` and
-  `expo-status-bar` are also a patch behind.
+- Keep dependencies SDK-aligned (`npx expo install <pkg>`, check `npx expo-doctor`).
+  The `expo-image-picker` major-version mismatch was fixed (now `~17.0.11`); doctor
+  was green at 18/18 as of the dev-tooling PR.
