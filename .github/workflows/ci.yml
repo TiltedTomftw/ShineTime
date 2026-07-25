@@ -20,6 +20,8 @@ jobs:
         run: npm run format:check
       - name: Unit tests
         run: npm test
+      - name: Component tests
+        run: npm run test:components
       - name: Typecheck (advisory)
         run: npx tsc --noEmit
         continue-on-error: true

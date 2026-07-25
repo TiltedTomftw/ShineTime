@@ -21,6 +21,15 @@ module.exports = [
   ...expoConfig,
   eslintConfigPrettier,
 
+  // React Native component tests: ESM + JSX, run by jest (not node --test).
+  {
+    files: ['**/__tests__/components/**/*.spec.js'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { ...globals.jest, ...globals.node },
+    },
+  },
+
   // eslint-config-expo 57 ships the React Compiler rule set as errors. This app
   // does not use the React Compiler, and the flagged code is hand-written and
   // correct, so keep these as advisory warnings rather than CI-blocking errors.
@@ -35,7 +44,8 @@ module.exports = [
   // CommonJS files: allow require/module/__dirname and Node globals.
   {
     files: [
-      '**/__tests__/**/*.js',
+      '**/__tests__/*.js',
+      '**/__tests__/integration/**/*.js',
       '**/*.test.js',
       'scripts/**/*.js',
       'src/services/timeMath.js',

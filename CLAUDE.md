@@ -45,6 +45,10 @@ This product ships **two independent front-ends**. Do NOT conflate them:
 - `npm run web` — web build on :8081. Preview via `.claude/launch.json` config
   `expo-web` (never launch the dev server through Bash).
 - `npm test` — `node --test` unit suites (`timeMath`, `jobLogic`). Pure logic only.
+- `npm run test:components` — jest + `@testing-library/react-native` render tests
+  (`__tests__/components/**/*.spec.js`). Runs in CI. **RNTL v14's `render`/`unmount`
+  are async — always `await` them.** Named `.spec.js` on purpose so `node --test`
+  doesn't try to run JSX.
 - `npm run test:integration` — end-to-end suite against the REAL Supabase project
   (`__tests__/integration/`): RLS + tenant isolation, job lifecycle in Postgres,
   the completed-job lock, sync/reconcile semantics, manager write-backs. Needs
