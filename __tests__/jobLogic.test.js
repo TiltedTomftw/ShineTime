@@ -9,6 +9,7 @@ const {
   isRemoteNewer,
   computeLiveElapsed,
   jobBelongsToOperator,
+  describeSyncStatus,
 } = require('../src/services/jobLogic');
 
 // --- sanitizeInput (trim + clamp; no tag stripping) -----------------------
@@ -295,4 +296,34 @@ test('jobBelongsToOperator falls back to name for legacy jobs without an id', ()
 
 test('jobBelongsToOperator handles a null job', () => {
   assert.strictEqual(jobBelongsToOperator(null, 'u1', 'Mike'), false);
+});
+
+// --- describeSyncStatus (surfacing sync failures) -------------------------
+
+test('describeSyncStatus stays silent when everything is synced', () => {
+  assert.strictEqual(describeSyncStatus({ pendingCount: 0, lastError: null }), null);
+  assert.strictEqual(describeSyncStatus(), null);
+});
+
+test('describeSyncStatus reports pending writes, pluralised', () => {
+  assert.match(describeSyncStatus({ pendingCount: 1 }).message, /^1 change not saved/);
+  assert.match(describeSyncStatus({ pendingCount: 3 }).message, /^3 changes not saved/);
+  assert.strictEqual(describeSyncStatus({ pendingCount: 2 }).tone, 'warning');
+});
+
+test('describeSyncStatus prefers the pending count over a stale error', () => {
+  const info = describeSyncStatus({ pendingCount: 2, lastError: 'boom' });
+  assert.strictEqual(info.tone, 'warning');
+  assert.match(info.message, /2 changes/);
+});
+
+test('describeSyncStatus surfaces an error when nothing is queued', () => {
+  const info = describeSyncStatus({ pendingCount: 0, lastError: 'Network request failed' });
+  assert.strictEqual(info.tone, 'error');
+  assert.match(info.message, /Network request failed/);
+});
+
+test('describeSyncStatus ignores a negative or junk pending count', () => {
+  assert.strictEqual(describeSyncStatus({ pendingCount: -5 }), null);
+  assert.strictEqual(describeSyncStatus({ pendingCount: 'nope' }), null);
 });

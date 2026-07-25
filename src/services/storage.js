@@ -341,6 +341,42 @@ const shouldScopeJobsToCurrentDetailer = async () => {
   return role === 'detailer';
 };
 
+// Observable sync status. Sync failures used to be console.log-only, which is
+// invisible on a phone — a detailer could finish a car with nothing saved to the
+// server. The UI subscribes to this so it can actually say so.
+let syncStatus = { pendingCount: 0, lastError: null };
+const syncStatusListeners = new Set();
+
+const emitSyncStatus = (patch) => {
+  const next = { ...syncStatus, ...patch };
+  if (next.pendingCount === syncStatus.pendingCount && next.lastError === syncStatus.lastError) {
+    return;
+  }
+  syncStatus = next;
+  for (const listener of syncStatusListeners) {
+    try {
+      listener(syncStatus);
+    } catch {
+      // A bad subscriber must never break syncing.
+    }
+  }
+};
+
+export const getSyncStatus = () => syncStatus;
+
+// Subscribe to sync status; fires immediately with the current value and
+// returns an unsubscribe function.
+export const subscribeSyncStatus = (listener) => {
+  if (typeof listener !== 'function') return () => {};
+  syncStatusListeners.add(listener);
+  listener(syncStatus);
+  // The queue survives app restarts, so seed the count from storage.
+  getPendingQueue()
+    .then((queue) => emitSyncStatus({ pendingCount: queue.length }))
+    .catch(() => {});
+  return () => syncStatusListeners.delete(listener);
+};
+
 // Pending-write queue: jobs whose server sync failed (e.g. offline) are held
 // here and retried on the next sync so an edit is never lost. All additive and
 // guarded — an empty queue is a no-op and existing flows are unchanged.
@@ -357,7 +393,10 @@ export const getPendingQueue = async () => {
 
 const savePendingQueue = async (queue) => {
   try {
-    await AsyncStorage.setItem(STORAGE_KEYS.PENDING_JOBS, JSON.stringify(ensureArray(queue)));
+    const next = ensureArray(queue);
+    await AsyncStorage.setItem(STORAGE_KEYS.PENDING_JOBS, JSON.stringify(next));
+    // Single choke point for queue changes — keep the observable status honest.
+    emitSyncStatus({ pendingCount: next.length });
   } catch (error) {
     console.log('Could not persist pending queue:', error.message);
   }
@@ -386,6 +425,9 @@ const purgePendingJobs = async (jobIds) => {
 // this to tell an offline creation (keep) from a server-side delete (drop).
 const markJobSynced = async (jobId) => {
   if (!jobId) return;
+  // Reaching here means a write landed on the server, so any previous sync
+  // error is stale — clear it (all three success paths funnel through here).
+  emitSyncStatus({ lastError: null });
   await mutateLocalJobs((jobs) => {
     const target = jobs.find((j) => j.jobId === jobId);
     if (target && !target.syncedAt) target.syncedAt = Date.now();
@@ -468,6 +510,7 @@ const runSyncFromServer = async () => {
     }
   } catch (error) {
     console.log('Could not sync from Supabase:', error.message);
+    emitSyncStatus({ lastError: error.message });
   }
 
   // Return local jobs as final fallback
@@ -1005,6 +1048,7 @@ export const syncJobToServer = async (job) => {
     if (!isReplayingQueue && !isPermanentConflict) {
       await enqueuePendingJob(job);
     }
+    emitSyncStatus({ lastError: error.message });
     return false;
   }
 };

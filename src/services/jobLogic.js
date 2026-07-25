@@ -161,6 +161,24 @@ const jobBelongsToOperator = (job, operatorId, operatorName) => {
   return (job.detailerName || '') === (operatorName || '');
 };
 
+// Turn raw sync state into something worth showing a detailer. Sync problems
+// were previously console.log-only — invisible on a phone — so a detailer could
+// finish a car with nothing actually saved to the server. Returns null when
+// there is nothing worth interrupting them about.
+const describeSyncStatus = ({ pendingCount = 0, lastError = null } = {}) => {
+  const pending = Math.max(0, Number(pendingCount) || 0);
+  if (pending > 0) {
+    return {
+      tone: 'warning',
+      message: `${pending} change${pending === 1 ? '' : 's'} not saved to the server yet — retrying automatically.`,
+    };
+  }
+  if (lastError) {
+    return { tone: 'error', message: `Sync problem: ${lastError}` };
+  }
+  return null;
+};
+
 module.exports = {
   sanitizeInput,
   ensureArray,
@@ -170,4 +188,5 @@ module.exports = {
   isRemoteNewer,
   computeLiveElapsed,
   jobBelongsToOperator,
+  describeSyncStatus,
 };
