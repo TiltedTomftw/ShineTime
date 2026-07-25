@@ -499,7 +499,177 @@ test('photos: the photo row is written so the image survives signed-URL expiry',
 });
 
 // =========================================================================
-// F. Detailer scoping
+// F. Invite-code onboarding (employees never see the dealership login)
+// =========================================================================
+
+// Mint a code the way ManageInviteCodesScreen does — as a real manager.
+const mintCode = async (token, dealershipId, opts = {}) => {
+  const res = await asUser(token, 'rpc/generate_invite_code', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_dealership_id: dealershipId,
+      p_role: opts.role || 'detailer',
+      p_expires_in_hours: opts.expiresInHours === undefined ? 168 : opts.expiresInHours,
+      p_max_uses: opts.maxUses === undefined ? null : opts.maxUses,
+    }),
+  });
+  return typeof res.body === 'string' ? res.body.replace(/"/g, '') : res.body;
+};
+
+// Reproduces what the employee-access Edge Function does server-side, so the
+// chain it depends on is proven even before the function is deployed.
+const enrollEmployee = async (code, name, dealershipSlug) => {
+  const email = `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}@${dealershipSlug}.employees.shinetime.invalid`;
+  const created = await (
+    await fetch(`${BASE}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: svcH,
+      body: JSON.stringify({
+        email,
+        password: `pw-${RUN}-${name}`,
+        email_confirm: true,
+        user_metadata: { full_name: name },
+      }),
+    })
+  ).json();
+  if (created.id) world.users.push(created.id);
+  const token = await signIn(email, `pw-${RUN}-${name}`);
+  const redeem = await asUser(token, 'rpc/redeem_invite_code', {
+    method: 'POST',
+    body: JSON.stringify({ p_code: code }),
+  });
+  return { userId: created.id, email, token, redeem };
+};
+
+test('invite: a manager can mint a code for their own dealership', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  assert.match(code, /^[A-Z0-9]{7}$/, `expected a 7-char code, got ${code}`);
+});
+
+test('invite: a DETAILER cannot mint codes (manager/owner only)', async () => {
+  const res = await asUser(world.alpha.detailerToken, 'rpc/generate_invite_code', {
+    method: 'POST',
+    body: JSON.stringify({ p_dealership_id: world.alpha.id, p_role: 'detailer' }),
+  });
+  assert.ok(res.status >= 400, `detailer must not mint codes, got ${res.status}`);
+});
+
+test('invite: redeeming enrolls the employee into the code dealership with its role', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const { userId, redeem } = await enrollEmployee(code, `Ana ${RUN}`, `it-alpha-${RUN}`);
+  assert.ok(redeem.status < 300, `redeem should succeed, got ${redeem.status}`);
+
+  const { body } = await svc(
+    `dealership_memberships?user_id=eq.${userId}&select=dealership_id,role,is_active`,
+  );
+  assert.strictEqual(body.length, 1, 'exactly one membership');
+  assert.strictEqual(body[0].dealership_id, world.alpha.id);
+  assert.strictEqual(body[0].role, 'detailer');
+  assert.strictEqual(body[0].is_active, true);
+});
+
+test('invite: the enrolled employee gets their OWN user id, not a shared one', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const a = await enrollEmployee(code, `Bo ${RUN}`, `it-alpha-${RUN}`);
+  const b = await enrollEmployee(code, `Cy ${RUN}`, `it-alpha-${RUN}`);
+  assert.notStrictEqual(a.userId, b.userId, 'two employees must be distinct accounts');
+  assert.notStrictEqual(a.userId, undefined);
+});
+
+test('invite: an unknown code is rejected', async () => {
+  const { token } = await enrollEmployee(
+    await mintCode(world.alpha.managerToken, world.alpha.id),
+    `Dee ${RUN}`,
+    `it-alpha-${RUN}`,
+  );
+  const res = await asUser(token, 'rpc/redeem_invite_code', {
+    method: 'POST',
+    body: JSON.stringify({ p_code: 'ZZZZZZZ' }),
+  });
+  assert.ok(res.status >= 400, 'unknown code must fail');
+});
+
+test('invite: an EXPIRED code is rejected', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { expiresInHours: -1 });
+  const { redeem } = await enrollEmployee(code, `Eli ${RUN}`, `it-alpha-${RUN}`);
+  assert.ok(redeem.status >= 400, 'expired code must fail');
+});
+
+test('invite: an EXHAUSTED code is rejected once max_uses is spent', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 1 });
+  const first = await enrollEmployee(code, `Fay ${RUN}`, `it-alpha-${RUN}`);
+  assert.ok(first.redeem.status < 300, 'first use should succeed');
+  const second = await enrollEmployee(code, `Gus ${RUN}`, `it-alpha-${RUN}`);
+  assert.ok(second.redeem.status >= 400, 'second use must be refused');
+});
+
+test('invite: re-redeeming as an existing member does not consume another use', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 2 });
+  const { token } = await enrollEmployee(code, `Hal ${RUN}`, `it-alpha-${RUN}`);
+  const again = await asUser(token, 'rpc/redeem_invite_code', {
+    method: 'POST',
+    body: JSON.stringify({ p_code: code }),
+  });
+  assert.ok(again.status < 300, 'idempotent for an existing member');
+  const { body } = await svc(`dealership_invite_codes?code=eq.${code}&select=used_count`);
+  assert.strictEqual(body[0].used_count, 1, 'used_count must not double-count');
+});
+
+test("invite: a code for dealership A never grants access to dealership B's jobs", async () => {
+  await seedJob(world.beta.id, { stockNumber: `${RUN}-BETA-SECRET` });
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const { token } = await enrollEmployee(code, `Ivy ${RUN}`, `it-alpha-${RUN}`);
+  const { body } = await asUser(token, `jobs?dealership_id=eq.${world.beta.id}&select=id`);
+  assert.deepStrictEqual(body, [], 'must not see another tenant');
+});
+
+test('invite: jobs created after enrolling are attributed to that employee', async () => {
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const { userId, token } = await enrollEmployee(code, `Jo ${RUN}`, `it-alpha-${RUN}`);
+  const res = await asUser(token, 'jobs', {
+    method: 'POST',
+    headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      dealership_id: world.alpha.id,
+      legacy_job_id: `${RUN}_attrib`,
+      status: 'in_progress',
+      stock_number: `${RUN}-ATTRIB`,
+      created_by_user_id: userId,
+      assigned_detailer_id: userId,
+      payload: { jobId: `${RUN}_attrib`, operationalUserId: userId },
+    }),
+  });
+  assert.ok(res.status < 300, `employee should be able to create a job, got ${res.status}`);
+  const { body } = await svc(
+    `jobs?legacy_job_id=eq.${RUN}_attrib&select=created_by_user_id,assigned_detailer_id`,
+  );
+  assert.strictEqual(body[0].created_by_user_id, userId, 'real per-person attribution');
+  assert.strictEqual(body[0].assigned_detailer_id, userId);
+});
+
+test('invite: employee-access Edge Function (skipped until deployed)', async (t) => {
+  const res = await fetch(`${BASE}/functions/v1/employee-access`, {
+    method: 'POST',
+    headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  if (res.status === 404) {
+    t.skip(
+      'employee-access is not deployed yet — run: npx supabase functions deploy employee-access',
+    );
+    return;
+  }
+  // Deployed: an empty body must be rejected by its own validation, not crash.
+  assert.ok(
+    res.status === 400 || res.status === 500,
+    `expected a handled error, got ${res.status}`,
+  );
+  const body = await res.json();
+  assert.ok(body.error, 'function should return a JSON error message');
+});
+
+// =========================================================================
+// G. Detailer scoping
 // =========================================================================
 
 test('scoping: two detailers with the SAME NAME do not see each other jobs', () => {

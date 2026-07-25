@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import AppNavigator from './src/navigation/AppNavigator';
 import AuthScreen from './src/screens/AuthScreen';
 import DealershipSelectScreen from './src/screens/DealershipSelectScreen';
-import UserPinScreen from './src/screens/UserPinScreen';
+import EmployeeAccessScreen from './src/screens/EmployeeAccessScreen';
 import CreateDealershipScreen from './src/screens/CreateDealershipScreen';
 import JoinByCodeScreen from './src/screens/JoinByCodeScreen';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
@@ -24,23 +24,24 @@ function NoAccessScreen({ onSignOut }) {
 }
 
 function AppEntry() {
-  const {
-    session,
-    memberships,
-    activeDealership,
-    hasCompletedDetailerSetup,
-    isLoading,
-    signOut,
-    selectActiveDealership,
-  } = useAuth();
+  const { session, memberships, activeDealership, isLoading, signOut, selectActiveDealership } =
+    useAuth();
   const [showJoin, setShowJoin] = React.useState(false);
+  const [showManagerSignIn, setShowManagerSignIn] = React.useState(false);
 
   if (isLoading) {
     return null; // Loading
   }
 
+  // Employees are the overwhelming majority of users and must never see the
+  // dealership's credentials, so the invite-code screen is the default entry
+  // point. Managers reach the email/password form via a small link.
   if (!session) {
-    return <AuthScreen />;
+    return showManagerSignIn ? (
+      <AuthScreen onBack={() => setShowManagerSignIn(false)} />
+    ) : (
+      <EmployeeAccessScreen onManagerSignIn={() => setShowManagerSignIn(true)} />
+    );
   }
 
   if (!memberships || memberships.length === 0) {
@@ -62,10 +63,8 @@ function AppEntry() {
     );
   }
 
-  if (!hasCompletedDetailerSetup) {
-    return <UserPinScreen />;
-  }
-
+  // No separate name+PIN step any more: the signed-in account IS the person, so
+  // identity now follows them across devices instead of living on one phone.
   return <AppNavigator />;
 }
 

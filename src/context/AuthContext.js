@@ -5,10 +5,8 @@ import { supabase } from '../lib/supabase';
 const ACTIVE_DEALERSHIP_KEY = '@detailtracker_active_dealership_id';
 const LEGACY_DETAILER_NAME_KEY = '@detailtracker_detailer_name';
 const ACTIVE_OPERATIONAL_ROLE_PREFIX = '@detailtracker_active_operational_role';
-const ACTIVE_OPERATIONAL_USER_PREFIX = '@detailtracker_active_operational_user';
-const DEALERSHIP_USERS_PREFIX = '@detailtracker_dealership_users';
-// Stable id of the active operational (name+PIN) user, so jobs can be attributed
-// and scoped by id instead of a mutable free-text name. storage.js reads this key.
+// Stable per-person id (now the auth user id) used to attribute and scope jobs
+// instead of a mutable free-text name. storage.js reads this key.
 const ACTIVE_OPERATIONAL_USER_ID_KEY = '@detailtracker_active_operational_user_id';
 
 const AuthContext = React.createContext(null);
@@ -32,25 +30,6 @@ const membershipRoleToOperational = (role) => {
   return r === 'owner' ? 'manager' : r;
 };
 
-const getOperationalUserKey = (userId, dealershipId) =>
-  `${ACTIVE_OPERATIONAL_USER_PREFIX}:${userId}:${dealershipId}`;
-const getDealershipUsersKey = (dealershipId) => `${DEALERSHIP_USERS_PREFIX}:${dealershipId}`;
-
-const loadDealershipUsers = async (dealershipId) => {
-  const raw = await AsyncStorage.getItem(getDealershipUsersKey(dealershipId));
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-};
-
-const saveDealershipUsers = async (dealershipId, users) => {
-  await AsyncStorage.setItem(getDealershipUsersKey(dealershipId), JSON.stringify(users));
-};
-
 export function AuthProvider({ children }) {
   const [session, setSession] = React.useState(null);
   const [profile, setProfile] = React.useState(null);
@@ -69,8 +48,6 @@ export function AuthProvider({ children }) {
     ? membershipRoleToOperational(activeDealership.role)
     : '';
 
-  const hasCompletedDetailerSetup = Boolean(activeOperationalRole && activeOperationalUser?.name);
-
   const resetUserState = React.useCallback(async () => {
     bootstrapUserIdRef.current = null;
     setProfile(null);
@@ -82,8 +59,12 @@ export function AuthProvider({ children }) {
     await AsyncStorage.removeItem(ACTIVE_OPERATIONAL_USER_ID_KEY);
   }, []);
 
+  // The signed-in account IS the person now (employees each get their own via
+  // the invite-code flow), so operational identity comes from the auth user
+  // rather than a device-local name+PIN record. That makes the id stable across
+  // devices and gives storage.js a real per-person id to attribute jobs to.
   const refreshOperationalState = React.useCallback(
-    async (userId, dealershipId, membershipRole) => {
+    async (userId, dealershipId, membershipRole, displayName) => {
       if (!userId || !dealershipId) {
         setActiveOperationalUser(null);
         return;
@@ -93,33 +74,19 @@ export function AuthProvider({ children }) {
       const operationalRole = membershipRoleToOperational(membershipRole);
       await AsyncStorage.setItem('@detailtracker_active_operational_role', operationalRole);
 
-      const userKey = getOperationalUserKey(userId, dealershipId);
-      const userRaw = await AsyncStorage.getItem(userKey);
+      const name = sanitizeName(displayName) || 'Unknown';
+      const user = { id: userId, name, role: operationalRole };
+      setActiveOperationalUser(user);
 
-      let user = null;
-      if (userRaw) {
-        try {
-          user = JSON.parse(userRaw);
-        } catch {
-          user = null;
-        }
-      }
-
-      setActiveOperationalUser(user && user.name ? user : null);
-      if (user?.name) {
-        await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, user.name);
-      }
-      if (user?.id) {
-        await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, user.id);
-      } else {
-        await AsyncStorage.removeItem(ACTIVE_OPERATIONAL_USER_ID_KEY);
-      }
+      // storage.js / jobLogic.jobBelongsToOperator read these keys unchanged.
+      await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, name);
+      await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, userId);
     },
     [],
   );
 
   const loadMemberships = React.useCallback(
-    async (userId) => {
+    async (userId, displayName) => {
       const { data, error: membershipsError } = await supabase
         .from('dealership_memberships')
         .select('id, dealership_id, role, is_active, dealerships(id, name, slug)')
@@ -143,14 +110,19 @@ export function AuthProvider({ children }) {
 
       if (saved) {
         setActiveDealership(saved);
-        await refreshOperationalState(userId, saved.dealershipId, saved.role);
+        await refreshOperationalState(userId, saved.dealershipId, saved.role, displayName);
         return;
       }
 
       if (normalized.length === 1) {
         await AsyncStorage.setItem(ACTIVE_DEALERSHIP_KEY, normalized[0].dealershipId);
         setActiveDealership(normalized[0]);
-        await refreshOperationalState(userId, normalized[0].dealershipId, normalized[0].role);
+        await refreshOperationalState(
+          userId,
+          normalized[0].dealershipId,
+          normalized[0].role,
+          displayName,
+        );
         return;
       }
 
@@ -192,7 +164,16 @@ export function AuthProvider({ children }) {
     }
 
     setProfile(profileRow);
+    return profileRow;
   }, []);
+
+  // Display name for job attribution: the profile row, else the account's
+  // metadata, else the email local part (for employees that's their name slug).
+  const displayNameFor = (profileRow, user) =>
+    sanitizeName(profileRow?.full_name) ||
+    sanitizeName(user?.user_metadata?.full_name) ||
+    inferNameFromEmail(user?.email) ||
+    'Unknown';
 
   const bootstrapUser = React.useCallback(
     async (user) => {
@@ -203,8 +184,8 @@ export function AuthProvider({ children }) {
       setLoadingUserData(true);
       setError('');
       try {
-        await ensureProfile(user);
-        await loadMemberships(user.id);
+        const profileRow = await ensureProfile(user);
+        await loadMemberships(user.id, displayNameFor(profileRow, user));
       } catch (e) {
         // Allow a retry on the next auth event if bootstrap failed.
         bootstrapUserIdRef.current = null;
@@ -274,80 +255,17 @@ export function AuthProvider({ children }) {
       await AsyncStorage.setItem(ACTIVE_DEALERSHIP_KEY, selected.dealershipId);
 
       if (session?.user?.id) {
-        await refreshOperationalState(session.user.id, selected.dealershipId, selected.role);
+        await refreshOperationalState(
+          session.user.id,
+          selected.dealershipId,
+          selected.role,
+          displayNameFor(profile, session.user),
+        );
       } else {
         setActiveOperationalUser(null);
       }
     },
-    [memberships, refreshOperationalState, session?.user?.id],
-  );
-
-  const completeDealershipUserAccess = React.useCallback(
-    async ({ mode, name, pin }) => {
-      if (!session?.user?.id) throw new Error('Not authenticated');
-      if (!activeDealership?.dealershipId) throw new Error('No active dealership selected');
-      if (!activeOperationalRole) throw new Error('No role assigned for this dealership');
-
-      const sanitizedName = sanitizeName(name);
-      const normalizedPin = String(pin || '').trim();
-
-      if (!sanitizedName) throw new Error('User name is required');
-      if (normalizedPin.length < 4) throw new Error('PIN must be at least 4 digits');
-
-      const dealershipId = activeDealership.dealershipId;
-      const users = await loadDealershipUsers(dealershipId);
-      const normalizedRole = activeOperationalRole.toLowerCase();
-
-      const existing = users.find(
-        (u) =>
-          (u.name || '').toLowerCase() === sanitizedName.toLowerCase() &&
-          (u.role || '').toLowerCase() === normalizedRole,
-      );
-
-      if (mode === 'create') {
-        if (existing) {
-          throw new Error('User already exists for this role. Switch to login mode.');
-        }
-
-        const newUser = {
-          id: `du_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-          name: sanitizedName,
-          role: normalizedRole,
-          pin: normalizedPin,
-          createdAt: Date.now(),
-        };
-
-        users.push(newUser);
-        await saveDealershipUsers(dealershipId, users);
-
-        setActiveOperationalUser(newUser);
-        await AsyncStorage.setItem(
-          getOperationalUserKey(session.user.id, dealershipId),
-          JSON.stringify(newUser),
-        );
-        await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, sanitizedName);
-        await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, newUser.id);
-        return newUser;
-      }
-
-      if (!existing) {
-        throw new Error('User not found for selected role. Create it first.');
-      }
-
-      if ((existing.pin || '') !== normalizedPin) {
-        throw new Error('Incorrect PIN');
-      }
-
-      setActiveOperationalUser(existing);
-      await AsyncStorage.setItem(
-        getOperationalUserKey(session.user.id, dealershipId),
-        JSON.stringify(existing),
-      );
-      await AsyncStorage.setItem(LEGACY_DETAILER_NAME_KEY, existing.name || sanitizedName);
-      await AsyncStorage.setItem(ACTIVE_OPERATIONAL_USER_ID_KEY, existing.id);
-      return existing;
-    },
-    [session?.user?.id, activeDealership?.dealershipId, activeOperationalRole],
+    [memberships, refreshOperationalState, session?.user?.id, profile],
   );
 
   const value = React.useMemo(
@@ -358,16 +276,14 @@ export function AuthProvider({ children }) {
       activeDealership,
       activeOperationalRole,
       activeOperationalUser,
-      hasCompletedDetailerSetup,
       isLoading: initializing || loadingUserData,
       error,
       signIn,
       signOut,
       selectActiveDealership,
-      completeDealershipUserAccess,
       refreshMemberships: async () => {
         if (session?.user) {
-          await loadMemberships(session.user.id);
+          await loadMemberships(session.user.id, displayNameFor(profile, session.user));
         }
       },
     }),
@@ -378,14 +294,12 @@ export function AuthProvider({ children }) {
       activeDealership,
       activeOperationalRole,
       activeOperationalUser,
-      hasCompletedDetailerSetup,
       initializing,
       loadingUserData,
       error,
       signIn,
       signOut,
       selectActiveDealership,
-      completeDealershipUserAccess,
       loadMemberships,
     ],
   );

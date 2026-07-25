@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 
-export default function AuthScreen() {
+export default function AuthScreen({ onBack }) {
   const { signIn, error } = useAuth();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
@@ -67,6 +67,12 @@ export default function AuthScreen() {
         <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={submitting}>
           <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Continue'}</Text>
         </TouchableOpacity>
+
+        {onBack && (
+          <TouchableOpacity style={styles.linkBtn} onPress={onBack} disabled={submitting}>
+            <Text style={styles.linkText}>Have an invite code? Sign in as an employee</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -118,5 +124,13 @@ const styles = StyleSheet.create({
     color: '#667eea',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  linkBtn: {
+    marginTop: 22,
+    alignItems: 'center',
+  },
+  linkText: {
+    color: '#fff',
+    fontWeight: '600',
   },
 });
