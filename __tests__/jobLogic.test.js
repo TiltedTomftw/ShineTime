@@ -5,7 +5,7 @@ const {
   ensureArray,
   parseTimestamp,
   mapSupabaseJobToLegacyShape,
-  mergeJobsPreferLocalIfNewer,
+  reconcileJobsWithRemote,
   isRemoteNewer,
   computeLiveElapsed,
   jobBelongsToOperator,
@@ -124,7 +124,7 @@ test('mapSupabaseJobToLegacyShape coerces numeric totals', () => {
   assert.strictEqual(job.totalActiveTime, 3000);
 });
 
-// --- mergeJobsPreferLocalIfNewer (offline sync core) ----------------------
+// --- reconcileJobsWithRemote (offline sync core + delete propagation) -----
 
 const job = (id, updatedAt, createdAt, extra = {}) => ({
   jobId: id,
@@ -133,64 +133,100 @@ const job = (id, updatedAt, createdAt, extra = {}) => ({
   ...extra,
 });
 
-test('merge keeps the local copy when it is newer than remote', () => {
+// Helper: ids of every job "alive" on the server.
+const liveOf = (...jobs) => jobs.map((j) => j.jobId);
+
+test('reconcile keeps the local copy when it is newer than remote', () => {
   const local = [job('a', 200, 100, { note: 'local' })];
   const remote = [job('a', 100, 100, { note: 'remote' })];
-  const merged = mergeJobsPreferLocalIfNewer(local, remote);
-  assert.strictEqual(merged.length, 1);
-  assert.strictEqual(merged[0].note, 'local');
+  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
+  assert.strictEqual(jobs.length, 1);
+  assert.strictEqual(jobs[0].note, 'local');
 });
 
-test('merge takes the remote copy when it is newer than local', () => {
+test('reconcile takes the remote copy when it is newer than local', () => {
   const local = [job('a', 100, 100, { note: 'local' })];
   const remote = [job('a', 300, 100, { note: 'remote' })];
-  const merged = mergeJobsPreferLocalIfNewer(local, remote);
-  assert.strictEqual(merged[0].note, 'remote');
+  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
+  assert.strictEqual(jobs[0].note, 'remote');
 });
 
-test('merge keeps remote when timestamps are equal (no clobber of synced)', () => {
+test('reconcile keeps remote when timestamps are equal (no clobber of synced)', () => {
   const local = [job('a', 100, 100, { note: 'local' })];
   const remote = [job('a', 100, 100, { note: 'remote' })];
-  const merged = mergeJobsPreferLocalIfNewer(local, remote);
-  assert.strictEqual(merged[0].note, 'remote');
+  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
+  assert.strictEqual(jobs[0].note, 'remote');
 });
 
-test('merge preserves jobs that exist only locally (unsynced offline edits)', () => {
-  const local = [job('local-only', 100, 500)];
+test('reconcile preserves a never-synced local job (offline creation)', () => {
+  const local = [job('local-only', 100, 500)]; // no syncedAt
   const remote = [job('a', 100, 100)];
-  const merged = mergeJobsPreferLocalIfNewer(local, remote);
-  const ids = merged.map((j) => j.jobId);
-  assert.ok(ids.includes('local-only'));
-  assert.ok(ids.includes('a'));
+  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
+  assert.ok(jobs.map((j) => j.jobId).includes('local-only'));
+  assert.deepStrictEqual(deletedJobIds, []);
 });
 
-test('merge preserves remote-only jobs', () => {
-  const merged = mergeJobsPreferLocalIfNewer([], [job('r', 100, 100)]);
+test('reconcile DROPS a previously-synced job that is gone from the server', () => {
+  const local = [job('gone', 100, 100, { syncedAt: 50 })];
+  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], []);
+  assert.deepStrictEqual(jobs, []);
+  assert.deepStrictEqual(deletedJobIds, ['gone']);
+});
+
+test('reconcile does NOT drop a synced job that is merely out of scope', () => {
+  // Alive on the server (in liveJobIds) but absent from this detailer's slice.
+  const local = [job('other-detailer', 100, 100, { syncedAt: 50 })];
+  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], ['other-detailer']);
   assert.deepStrictEqual(
-    merged.map((j) => j.jobId),
+    jobs.map((j) => j.jobId),
+    ['other-detailer'],
+  );
+  assert.deepStrictEqual(deletedJobIds, []);
+});
+
+test('reconcile stamps syncedAt on jobs returned by the server', () => {
+  const remote = [job('a', 100, 100)];
+  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote), 999);
+  assert.strictEqual(jobs[0].syncedAt, 999);
+});
+
+test('reconcile backfills syncedAt for a local job confirmed present remotely', () => {
+  const local = [job('a', 500, 100, { note: 'local' })]; // newer, wins, no syncedAt
+  const remote = [job('a', 100, 100)];
+  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote), 777);
+  assert.strictEqual(jobs[0].note, 'local');
+  assert.strictEqual(jobs[0].syncedAt, 777);
+});
+
+test('reconcile preserves remote-only jobs', () => {
+  const remote = [job('r', 100, 100)];
+  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote));
+  assert.deepStrictEqual(
+    jobs.map((j) => j.jobId),
     ['r'],
   );
 });
 
-test('merge sorts results newest-created first', () => {
+test('reconcile sorts results newest-created first', () => {
   const remote = [job('old', 1, 100), job('new', 1, 300), job('mid', 1, 200)];
-  const merged = mergeJobsPreferLocalIfNewer([], remote);
+  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote));
   assert.deepStrictEqual(
-    merged.map((j) => j.jobId),
+    jobs.map((j) => j.jobId),
     ['new', 'mid', 'old'],
   );
 });
 
-test('merge tolerates non-array inputs', () => {
-  assert.deepStrictEqual(mergeJobsPreferLocalIfNewer(null, undefined), []);
+test('reconcile tolerates non-array inputs', () => {
+  const { jobs, deletedJobIds } = reconcileJobsWithRemote(null, undefined, null);
+  assert.deepStrictEqual(jobs, []);
+  assert.deepStrictEqual(deletedJobIds, []);
 });
 
-test('merge treats a missing updatedAt as oldest', () => {
+test('reconcile treats a missing updatedAt as oldest', () => {
   const local = [job('a', undefined, 100, { note: 'local' })];
   const remote = [job('a', 50, 100, { note: 'remote' })];
-  const merged = mergeJobsPreferLocalIfNewer(local, remote);
-  // local has no updatedAt (=> 0), remote is newer, so remote wins.
-  assert.strictEqual(merged[0].note, 'remote');
+  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
+  assert.strictEqual(jobs[0].note, 'remote');
 });
 
 // --- isRemoteNewer --------------------------------------------------------

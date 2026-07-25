@@ -37,6 +37,7 @@ module.exports = [
     files: [
       '**/__tests__/**/*.js',
       '**/*.test.js',
+      'scripts/**/*.js',
       'src/services/timeMath.js',
       'src/services/jobLogic.js',
       'eslint.config.js',

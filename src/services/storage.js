@@ -7,7 +7,7 @@ import {
   ensureArray,
   parseTimestamp,
   mapSupabaseJobToLegacyShape,
-  mergeJobsPreferLocalIfNewer,
+  reconcileJobsWithRemote,
   isRemoteNewer,
 } from './jobLogic';
 
@@ -372,6 +372,26 @@ export const enqueuePendingJob = async (job) => {
   await savePendingQueue(next);
 };
 
+// Remove jobs from the retry queue (used when the server says they're deleted,
+// so a queued write can't resurrect them).
+const purgePendingJobs = async (jobIds) => {
+  const ids = new Set(ensureArray(jobIds));
+  if (ids.size === 0) return;
+  const queue = await getPendingQueue();
+  const next = queue.filter((job) => !ids.has(job.jobId));
+  if (next.length !== queue.length) await savePendingQueue(next);
+};
+
+// Stamp a job as confirmed-present on the server. reconcileJobsWithRemote uses
+// this to tell an offline creation (keep) from a server-side delete (drop).
+const markJobSynced = async (jobId) => {
+  if (!jobId) return;
+  await mutateLocalJobs((jobs) => {
+    const target = jobs.find((j) => j.jobId === jobId);
+    if (target && !target.syncedAt) target.syncedAt = Date.now();
+  });
+};
+
 export const replayPendingQueue = async () => {
   const queue = await getPendingQueue();
   if (queue.length === 0) return { replayed: 0, remaining: 0 };
@@ -421,12 +441,25 @@ const runSyncFromServer = async () => {
       // cache may hold jobs outside the current scope (other detailers who used
       // this device); we filter the RETURNED view so callers only ever see the
       // current detailer's jobs.
-      const merged = await withJobsLock(async () => {
+      // Delete detection needs the FULL live id set (every job alive on the
+      // server), not the role-scoped slice — otherwise another detailer's job
+      // cached on this shared device looks like a deletion.
+      const liveJobIds = supabaseJobs.map((job) => job.jobId);
+
+      const { merged, deletedJobIds } = await withJobsLock(async () => {
         const localJobs = await getLocalJobs();
-        const next = mergeJobsPreferLocalIfNewer(localJobs, roleFilteredJobs);
-        await saveLocalJobs(next);
-        return next;
+        const result = reconcileJobsWithRemote(localJobs, roleFilteredJobs, liveJobIds);
+        await saveLocalJobs(result.jobs);
+        return { merged: result.jobs, deletedJobIds: result.deletedJobIds };
       });
+
+      // Drop server-deleted jobs from the retry queue too, or the next replay
+      // would re-insert them (the "zombie job" bug).
+      if (deletedJobIds.length > 0) {
+        await purgePendingJobs(deletedJobIds);
+        console.log(`[sync] removed ${deletedJobIds.length} job(s) deleted on the server`);
+      }
+
       const scopedView = merged.filter(inCurrentScope);
       console.log(
         `Synced ${roleFilteredJobs.length} in-scope remote jobs; returning ${scopedView.length}`,
@@ -936,6 +969,7 @@ export const syncJobToServer = async (job) => {
     if (existing?.id) {
       if (isRemoteNewer(existing.client_updated_at, job.updatedAt)) {
         console.log(`[sync] skipped stale local update for ${job.jobId}`);
+        await markJobSynced(job.jobId); // it demonstrably exists on the server
         return true;
       }
 
@@ -947,6 +981,7 @@ export const syncJobToServer = async (job) => {
 
       if (updateError) throw updateError;
       console.log(`[sync] updated job ${job.jobId}`);
+      await markJobSynced(job.jobId);
       return true;
     }
 
@@ -954,6 +989,7 @@ export const syncJobToServer = async (job) => {
 
     if (insertError) throw insertError;
     console.log(`[sync] inserted job ${job.jobId}`);
+    await markJobSynced(job.jobId);
     return true;
   } catch (error) {
     // Postgres unique_violation (e.g. one-active-job-per-stock) will never
