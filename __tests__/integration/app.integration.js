@@ -669,7 +669,149 @@ test('invite: employee-access Edge Function (skipped until deployed)', async (t)
 });
 
 // =========================================================================
-// G. Detailer scoping
+// G. The deployed employee-access Edge Function (the real onboarding path)
+// =========================================================================
+
+const callEmployeeAccess = async (body) => {
+  const res = await fetch(`${BASE}/functions/v1/employee-access`, {
+    method: 'POST',
+    headers: { apikey: ANON, Authorization: `Bearer ${ANON}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let parsed = null;
+  try {
+    parsed = await res.json();
+  } catch {
+    parsed = null;
+  }
+  return { status: res.status, body: parsed };
+};
+
+const userIdFromToken = async (accessToken) => {
+  const res = await fetch(`${BASE}/auth/v1/user`, {
+    headers: { apikey: ANON, Authorization: `Bearer ${accessToken}` },
+  });
+  const user = await res.json();
+  if (user?.id) world.users.push(user.id);
+  return user?.id || null;
+};
+
+const fnDeployed = async () => (await callEmployeeAccess({})).status !== 404;
+
+test('employee-access: enrolls a new employee and returns a usable session', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const res = await callEmployeeAccess({ code, name: `Nia ${RUN}`, pin: '1234' });
+
+  assert.strictEqual(res.status, 200, `enroll should succeed: ${JSON.stringify(res.body)}`);
+  assert.ok(res.body.access_token, 'returns a session');
+  assert.strictEqual(res.body.dealership?.id, world.alpha.id, 'routed to the code dealership');
+
+  const userId = await userIdFromToken(res.body.access_token);
+  const { body } = await svc(`dealership_memberships?user_id=eq.${userId}&select=role`);
+  assert.strictEqual(body[0]?.role, 'detailer');
+});
+
+test('employee-access: the same person signs back in instead of duplicating', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 5 });
+  const name = `Omar ${RUN}`;
+
+  const first = await callEmployeeAccess({ code, name, pin: '4321' });
+  const second = await callEmployeeAccess({ code, name, pin: '4321' });
+  assert.strictEqual(second.status, 200);
+
+  const idA = await userIdFromToken(first.body.access_token);
+  const idB = await userIdFromToken(second.body.access_token);
+  assert.strictEqual(idA, idB, 'same account, not a second one');
+});
+
+test('employee-access: name capitalisation and spacing resolve to one account', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 5 });
+  const a = await callEmployeeAccess({ code, name: `Pat ${RUN}`, pin: '1111' });
+  const b = await callEmployeeAccess({ code, name: `  pat   ${RUN}  `, pin: '1111' });
+
+  assert.strictEqual(b.status, 200, 'a differently-typed name must still sign in');
+  assert.strictEqual(
+    await userIdFromToken(a.body.access_token),
+    await userIdFromToken(b.body.access_token),
+    'must not create a second account for the same person',
+  );
+});
+
+test('employee-access: the wrong PIN never grants a session', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 5 });
+  const name = `Quinn ${RUN}`;
+  const ok = await callEmployeeAccess({ code, name, pin: '2468' });
+  await userIdFromToken(ok.body.access_token);
+
+  const wrong = await callEmployeeAccess({ code, name, pin: '9999' });
+  assert.strictEqual(wrong.status, 401, 'wrong PIN must be refused');
+  assert.ok(!wrong.body?.access_token, 'and must not leak a session');
+});
+
+test('employee-access: the same name at TWO dealerships stays two people', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const name = `Sam ${RUN}`;
+  const alphaCode = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const betaMgrEmail = `${RUN}-b-mgr@shinetime.test`;
+  await createUser(betaMgrEmail, 'Passw0rd!23', 'owner', world.beta.id);
+  const betaToken = await signIn(betaMgrEmail, 'Passw0rd!23');
+  const betaCode = await mintCode(betaToken, world.beta.id);
+
+  const inAlpha = await callEmployeeAccess({ code: alphaCode, name, pin: '1234' });
+  const inBeta = await callEmployeeAccess({ code: betaCode, name, pin: '1234' });
+  assert.strictEqual(inAlpha.status, 200);
+  assert.strictEqual(inBeta.status, 200);
+
+  const idAlpha = await userIdFromToken(inAlpha.body.access_token);
+  const idBeta = await userIdFromToken(inBeta.body.access_token);
+  assert.notStrictEqual(idAlpha, idBeta, 'same name at different dealerships = different accounts');
+});
+
+test('employee-access: an enrolled employee cannot read another tenant', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  await seedJob(world.beta.id, { stockNumber: `${RUN}-FN-SECRET` });
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id);
+  const res = await callEmployeeAccess({ code, name: `Tia ${RUN}`, pin: '1234' });
+  await userIdFromToken(res.body.access_token);
+
+  const { body } = await asUser(
+    res.body.access_token,
+    `jobs?dealership_id=eq.${world.beta.id}&select=id`,
+  );
+  assert.deepStrictEqual(body, [], 'RLS still isolates tenants after invite onboarding');
+});
+
+test('employee-access: a manager-role code grants manager access', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { role: 'manager' });
+  const res = await callEmployeeAccess({ code, name: `Uma ${RUN}`, pin: '1234' });
+  assert.strictEqual(res.status, 200);
+  const userId = await userIdFromToken(res.body.access_token);
+  const { body } = await svc(`dealership_memberships?user_id=eq.${userId}&select=role`);
+  assert.strictEqual(body[0]?.role, 'manager', 'the code role is honoured');
+});
+
+test('employee-access: rejects a too-short PIN and a blank name', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 5 });
+  assert.strictEqual((await callEmployeeAccess({ code, name: `V ${RUN}`, pin: '12' })).status, 400);
+  assert.strictEqual((await callEmployeeAccess({ code, name: '   ', pin: '1234' })).status, 400);
+});
+
+test('employee-access: an expired code cannot onboard anyone', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { expiresInHours: -1 });
+  const res = await callEmployeeAccess({ code, name: `Wes ${RUN}`, pin: '1234' });
+  assert.ok(res.status >= 400, 'expired code must be refused');
+  assert.ok(!res.body?.access_token);
+});
+
+// =========================================================================
+// H. Detailer scoping
 // =========================================================================
 
 test('scoping: two detailers with the SAME NAME do not see each other jobs', () => {

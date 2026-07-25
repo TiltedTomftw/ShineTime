@@ -145,6 +145,9 @@ const styles = StyleSheet.create({
   disabled: { opacity: 0.6 },
   primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
   hint: { color: '#e0e7ff', fontSize: 13, textAlign: 'center', marginTop: 14 },
-  linkBtn: { marginTop: 22, alignItems: 'center' },
-  linkText: { color: '#fff', fontWeight: '600' },
+  // Pushed well clear of the "Returning?" hint and de-emphasised: employees are
+  // the primary audience here, so the manager route shouldn't compete for
+  // attention or read as a second block of instructions.
+  linkBtn: { marginTop: 56, alignItems: 'center', paddingVertical: 8 },
+  linkText: { color: 'rgba(255,255,255,0.75)', fontWeight: '600', fontSize: 13 },
 });

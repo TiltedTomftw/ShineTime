@@ -115,6 +115,15 @@ describe('EmployeeAccessScreen', () => {
     expect(screen.getByPlaceholderText(/Create a PIN/).props.value).toBe('1234');
   });
 
+  it('keeps the manager link well clear of the "Returning?" hint', async () => {
+    // The two sat close together and read as one block of instructions; the
+    // manager route is secondary and must stay visually separated.
+    await render(<EmployeeAccessScreen onManagerSignIn={() => {}} />);
+    const link = screen.getByText('Manager sign-in');
+    const spacing = link.parent?.props?.style?.marginTop ?? 0;
+    expect(spacing).toBeGreaterThanOrEqual(40);
+  });
+
   it('offers a manager sign-in link only when a handler is supplied', async () => {
     const onManagerSignIn = jest.fn();
     const view = await render(<EmployeeAccessScreen onManagerSignIn={onManagerSignIn} />);
