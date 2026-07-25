@@ -218,6 +218,12 @@
     }
     .detailer-job-row:hover { background: rgba(99, 102, 241, 0.06); }
 
+    .manager-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
     .panel {
       background: white;
       border-radius: 20px;
@@ -760,6 +766,7 @@
 
       return {
         ...payload,
+        remoteId: row.id, // DB primary key — needed for manager write-backs
         jobId: payload.jobId || row.legacy_job_id || row.id,
         status: payload.status || row.status || 'queued',
         deviceId: payload.deviceId || row.device_id || null,
@@ -1119,6 +1126,13 @@
           <div class="modal-card"><strong>Started</strong><br>${formatDateTime(job.startTime)}</div>
         </div>
 
+        <div class="modal-section manager-actions">
+          ${job.status === 'completed'
+            ? `<button class="btn ghost" onclick='reopenForRework(${JSON.stringify(job).replace(/'/g, '&apos;')})'>↩ Reopen for Rework</button>`
+            : ''}
+          <button class="btn ghost" onclick='reassignJob(${JSON.stringify(job).replace(/'/g, '&apos;')})'>⇄ Reassign Detailer</button>
+        </div>
+
         <div class="modal-section">
           <h3>Time Tracking</h3>
           <div class="modal-grid">
@@ -1145,6 +1159,93 @@
       `;
 
       document.getElementById('jobModal').classList.add('show');
+    }
+
+    // --- Manager actions -------------------------------------------------
+    // The manager could previously only LOOK at jobs. These write back to
+    // Supabase so a manager can actually intervene: send a car back for rework,
+    // or hand it to a different detailer.
+    //
+    // Both re-read the row's payload, mutate it, and bump BOTH payload.updatedAt
+    // and client_updated_at. That matters: the app's merge keeps the local copy
+    // when local.updatedAt > remote.updatedAt, so without the bump a detailer's
+    // device would ignore the manager's change.
+    async function applyManagerJobUpdate(job, mutatePayload) {
+      await ensureSignedIn();
+      const { data, error } = await supabaseClient
+        .from('jobs')
+        .select('id,payload')
+        .eq('id', job.remoteId)
+        .single();
+      if (error) throw error;
+
+      const payload = data.payload && typeof data.payload === 'object' ? { ...data.payload } : {};
+      mutatePayload(payload);
+
+      const now = Date.now();
+      payload.updatedAt = now;
+      payload.custodyEvents = Array.isArray(payload.custodyEvents) ? payload.custodyEvents : [];
+
+      const { error: updateError } = await supabaseClient
+        .from('jobs')
+        .update({
+          status: payload.status,
+          payload,
+          client_updated_at: new Date(now).toISOString(),
+          ended_at: payload.endTime ? new Date(payload.endTime).toISOString() : null,
+        })
+        .eq('id', job.remoteId);
+      if (updateError) throw updateError;
+    }
+
+    async function reopenForRework(job) {
+      if (!confirm(`Send ${job.stockNumber || 'this job'} back for rework?`)) return;
+      try {
+        await applyManagerJobUpdate(job, (payload) => {
+          payload.status = 'needs_rework';
+          payload.endTime = null; // it's active again
+          payload.custodyEvents = (Array.isArray(payload.custodyEvents) ? payload.custodyEvents : []).concat({
+            type: 'rework',
+            timestamp: Date.now(),
+            detailerName: 'Manager',
+            note: 'Reopened for rework from the dashboard',
+          });
+        });
+        closeModal(null, 'jobModal');
+        setStatus('Job reopened for rework');
+        await loadDashboard();
+      } catch (e) {
+        alert('Could not reopen job: ' + e.message);
+      }
+    }
+
+    async function reassignJob(job) {
+      const known = Array.from(
+        new Set(dashboardJobs.map((j) => j.detailerName).filter(Boolean))
+      ).join(', ');
+      const name = prompt(`Reassign ${job.stockNumber || 'this job'} to which detailer?` + (known ? `\n\nKnown: ${known}` : ''), job.detailerName || '');
+      const next = (name || '').trim();
+      if (!next || next === job.detailerName) return;
+      try {
+        await applyManagerJobUpdate(job, (payload) => {
+          payload.detailerName = next;
+          payload.detailers = (Array.isArray(payload.detailers) ? payload.detailers : []).concat(next);
+          // Drop the previous operator id so the app's id-first scoping falls
+          // back to name matching and the NEW detailer sees the job.
+          delete payload.operationalUserId;
+          payload.custodyEvents = (Array.isArray(payload.custodyEvents) ? payload.custodyEvents : []).concat({
+            type: 'handoff',
+            timestamp: Date.now(),
+            detailerName: next,
+            note: 'Reassigned from the dashboard',
+          });
+        });
+        closeModal(null, 'jobModal');
+        setStatus(`Reassigned to ${next}`);
+        await loadDashboard();
+      } catch (e) {
+        alert('Could not reassign job: ' + e.message);
+      }
     }
 
     function showDetailerDetails(name) {
