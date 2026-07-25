@@ -687,6 +687,22 @@ const callEmployeeAccess = async (body) => {
   return { status: res.status, body: parsed };
 };
 
+// Same call, but authenticated as a specific user (manager actions need this).
+const callEmployeeAccessAs = async (token, body) => {
+  const res = await fetch(`${BASE}/functions/v1/employee-access`, {
+    method: 'POST',
+    headers: { apikey: ANON, Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let parsed = null;
+  try {
+    parsed = await res.json();
+  } catch {
+    parsed = null;
+  }
+  return { status: res.status, body: parsed };
+};
+
 const userIdFromToken = async (accessToken) => {
   const res = await fetch(`${BASE}/auth/v1/user`, {
     headers: { apikey: ANON, Authorization: `Bearer ${accessToken}` },
@@ -811,7 +827,120 @@ test('employee-access: an expired code cannot onboard anyone', async (t) => {
 });
 
 // =========================================================================
-// H. Detailer scoping
+// H. Forgotten-PIN recovery (manager-gated)
+// =========================================================================
+
+// Enrol a detailer through the real function and hand back their identity.
+const enrolViaFunction = async (code, name, pin) => {
+  const res = await callEmployeeAccess({ code, name, pin });
+  const userId = res.body?.access_token ? await userIdFromToken(res.body.access_token) : null;
+  return { status: res.status, token: res.body?.access_token, userId };
+};
+
+test('pin reset: a manager can list their team', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
+  const emp = await enrolViaFunction(code, `Team ${RUN}`, '1111');
+
+  const res = await callEmployeeAccessAs(world.alpha.managerToken, {
+    action: 'list_employees',
+    dealershipId: world.alpha.id,
+  });
+  assert.strictEqual(res.status, 200);
+  const found = (res.body.employees || []).find((e) => e.userId === emp.userId);
+  assert.ok(found, 'the new detailer appears in the team list');
+  assert.strictEqual(found.role, 'detailer');
+});
+
+test('pin reset: a forgotten PIN can be recovered WITHOUT losing identity', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
+  const name = `Forgot ${RUN}`;
+  const before = await enrolViaFunction(code, name, '1111');
+  assert.ok(before.userId, 'enrolled');
+
+  // Locked out on their own.
+  assert.strictEqual((await callEmployeeAccess({ code, name, pin: '2222' })).status, 401);
+
+  const reset = await callEmployeeAccessAs(world.alpha.managerToken, {
+    action: 'reset_pin',
+    dealershipId: world.alpha.id,
+    employeeUserId: before.userId,
+    newPin: '2222',
+  });
+  assert.strictEqual(reset.status, 200, `reset should succeed: ${JSON.stringify(reset.body)}`);
+
+  const after = await enrolViaFunction(code, name, '2222');
+  assert.strictEqual(after.status, 200, 'signs in with the new PIN');
+  assert.strictEqual(after.userId, before.userId, 'SAME user id — job history stays attached');
+  assert.strictEqual(
+    (await callEmployeeAccess({ code, name, pin: '1111' })).status,
+    401,
+    'the old PIN stops working',
+  );
+});
+
+test('pin reset: a DETAILER cannot reset PINs or list the team', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
+  const emp = await enrolViaFunction(code, `Nosy ${RUN}`, '1111');
+
+  const reset = await callEmployeeAccessAs(emp.token, {
+    action: 'reset_pin',
+    dealershipId: world.alpha.id,
+    employeeUserId: emp.userId,
+    newPin: '9999',
+  });
+  assert.strictEqual(reset.status, 403, 'privilege escalation must be refused');
+
+  const list = await callEmployeeAccessAs(emp.token, {
+    action: 'list_employees',
+    dealershipId: world.alpha.id,
+  });
+  assert.strictEqual(list.status, 403, 'a detailer cannot enumerate the team');
+});
+
+test('pin reset: an anonymous caller cannot reset', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const res = await callEmployeeAccess({
+    action: 'reset_pin',
+    dealershipId: world.alpha.id,
+    employeeUserId: '00000000-0000-0000-0000-000000000001',
+    newPin: '9999',
+  });
+  assert.strictEqual(res.status, 401);
+});
+
+test("pin reset: a manager cannot touch ANOTHER dealership's employee", async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const alphaCode = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
+  const victim = await enrolViaFunction(alphaCode, `Victim ${RUN}`, '1111');
+
+  // A manager of BETA tries to reset an ALPHA employee.
+  const betaMgrEmail = `${RUN}-b-mgr2@shinetime.test`;
+  await createUser(betaMgrEmail, 'Passw0rd!23', 'owner', world.beta.id);
+  const betaToken = await signIn(betaMgrEmail, 'Passw0rd!23');
+
+  const cross = await callEmployeeAccessAs(betaToken, {
+    action: 'reset_pin',
+    dealershipId: world.beta.id, // their own dealership, someone else's employee
+    employeeUserId: victim.userId,
+    newPin: '9999',
+  });
+  assert.strictEqual(cross.status, 403, 'must not reach across tenants');
+
+  // And they cannot claim alpha's dealership id either.
+  const spoof = await callEmployeeAccessAs(betaToken, {
+    action: 'reset_pin',
+    dealershipId: world.alpha.id,
+    employeeUserId: victim.userId,
+    newPin: '9999',
+  });
+  assert.strictEqual(spoof.status, 403, 'must not be able to claim another dealership');
+});
+
+// =========================================================================
+// I. Detailer scoping
 // =========================================================================
 
 test('scoping: two detailers with the SAME NAME do not see each other jobs', () => {

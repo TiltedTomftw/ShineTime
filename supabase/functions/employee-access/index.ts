@@ -28,7 +28,16 @@ const json = (status: number, body: Record<string, unknown>) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-type AccessRequest = { code?: string; name?: string; pin?: string };
+type AccessRequest = {
+  action?: "enrol" | "list_employees" | "reset_pin";
+  code?: string;
+  name?: string;
+  pin?: string;
+  // manager-gated actions
+  dealershipId?: string;
+  employeeUserId?: string;
+  newPin?: string;
+};
 
 // Mirrors public.slugify() from migration 004.
 const slugify = (value: string) =>
@@ -52,6 +61,43 @@ async function derivePassword(pin: string, email: string, pepper: string) {
   return btoa(String.fromCharCode(...new Uint8Array(digest))).slice(0, 40);
 }
 
+// Confirm the caller is an owner/manager OF THIS dealership. Everything below
+// runs with the service role, so this check is the only thing standing between a
+// signed-in detailer (or another dealership's manager) and someone else's team.
+async function requireManager(
+  req: Request,
+  admin: ReturnType<typeof createClient>,
+  supabaseUrl: string,
+  anonKey: string,
+  dealershipId: string,
+) {
+  const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
+  if (!token || !dealershipId) {
+    return { error: json(401, { error: "Sign in as a manager first." }) };
+  }
+
+  const authed = createClient(supabaseUrl, anonKey, {
+    auth: { persistSession: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+  const { data: userData } = await authed.auth.getUser();
+  const caller = userData?.user;
+  if (!caller) return { error: json(401, { error: "Sign in as a manager first." }) };
+
+  const { data: membership } = await admin
+    .from("dealership_memberships")
+    .select("role")
+    .eq("dealership_id", dealershipId)
+    .eq("user_id", caller.id)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!membership || !["owner", "manager"].includes(membership.role)) {
+    return { error: json(403, { error: "Only a manager can do that." }) };
+  }
+  return { caller };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json(405, { error: "Method not allowed" });
@@ -71,6 +117,72 @@ Deno.serve(async (req) => {
     return json(400, { error: "Invalid request" });
   }
 
+  const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
+  const action = body.action || "enrol";
+
+  // --- Manager-gated: see the team, and recover a forgotten PIN -----------
+  // An employee's password is DERIVED from their PIN, so a forgotten PIN can
+  // only be recovered here. Resetting keeps their existing user id, which is
+  // what keeps their job history attached to them — deleting and re-enrolling
+  // would mint a new id and split their history in two.
+  if (action === "list_employees" || action === "reset_pin") {
+    const dealershipId = (body.dealershipId || "").trim();
+    const guard = await requireManager(req, admin, supabaseUrl, anonKey, dealershipId);
+    if (guard.error) return guard.error;
+
+    const { data: members } = await admin
+      .from("dealership_memberships")
+      .select("user_id, role")
+      .eq("dealership_id", dealershipId)
+      .eq("is_active", true);
+
+    if (action === "list_employees") {
+      const ids = (members || []).map((m) => m.user_id);
+      const { data: profiles } = await admin
+        .from("profiles")
+        .select("user_id, full_name")
+        .in("user_id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
+
+      const nameFor = new Map((profiles || []).map((p) => [p.user_id, p.full_name]));
+      return json(200, {
+        employees: (members || []).map((m) => ({
+          userId: m.user_id,
+          role: m.role,
+          name: nameFor.get(m.user_id) || "Unknown",
+        })),
+      });
+    }
+
+    // reset_pin
+    const employeeUserId = (body.employeeUserId || "").trim();
+    const newPin = (body.newPin || "").trim();
+    if (!employeeUserId || newPin.length < 4) {
+      return json(400, { error: "Choose an employee and a new PIN of at least 4 digits." });
+    }
+
+    // The target must belong to the SAME dealership — otherwise a manager could
+    // reset the PIN of someone at another tenant.
+    if (!(members || []).some((m) => m.user_id === employeeUserId)) {
+      return json(403, { error: "That employee is not on your team." });
+    }
+
+    const { data: target, error: targetError } = await admin.auth.admin.getUserById(employeeUserId);
+    if (targetError || !target?.user?.email) {
+      return json(404, { error: "Could not find that employee." });
+    }
+
+    const newPassword = await derivePassword(newPin, target.user.email, pepper);
+    const { error: updateError } = await admin.auth.admin.updateUserById(employeeUserId, {
+      password: newPassword,
+    });
+    if (updateError) {
+      console.error("employee-access: reset_pin failed:", updateError.message);
+      return json(500, { error: "Could not reset that PIN." });
+    }
+
+    return json(200, { ok: true, employeeUserId });
+  }
+
   const code = (body.code || "").trim().toUpperCase();
   const name = (body.name || "").trim().replace(/\s+/g, " ").slice(0, 50);
   const pin = (body.pin || "").trim();
@@ -78,8 +190,6 @@ Deno.serve(async (req) => {
   if (!code || !name || pin.length < 4) {
     return json(400, { error: "Enter your invite code, your name, and a PIN of at least 4 digits." });
   }
-
-  const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
 
   // 1) Validate the code with the service role. Any failure returns ONE generic
   //    message so codes and dealerships stay non-enumerable (as in migration 004).
