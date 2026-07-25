@@ -127,11 +127,22 @@ Deno.serve(async (req) => {
     });
 
     if (createError) {
-      // The account exists but the password didn't match: same name, wrong PIN.
-      // Do not reveal which of the two was wrong.
-      return json(401, {
-        error: "That name is already used at this dealership, or the PIN is incorrect.",
-      });
+      // Only an "already registered" failure means the sign-in above failed
+      // because the PIN was wrong (the account exists). Anything else is a real
+      // server-side problem and must NOT be reported as a bad PIN — conflating
+      // the two hides genuine faults behind a plausible-looking user error.
+      const detail = createError.message || "";
+      const alreadyExists =
+        createError.status === 422 || /already|registered|exists/i.test(detail);
+
+      if (alreadyExists) {
+        return json(401, {
+          error: "That name is already used at this dealership, or the PIN is incorrect.",
+        });
+      }
+
+      console.error("employee-access: createUser failed:", detail);
+      return json(500, { error: "Could not create your account.", detail: detail.slice(0, 200) });
     }
 
     await admin
