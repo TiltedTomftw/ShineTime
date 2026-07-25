@@ -8,6 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "node --test",
+    "test:integration": "node --test __tests__/integration/app.integration.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."

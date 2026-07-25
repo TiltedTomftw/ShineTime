@@ -44,7 +44,13 @@ This product ships **two independent front-ends**. Do NOT conflate them:
 - `npm start` — Expo dev server (QR for Expo Go).
 - `npm run web` — web build on :8081. Preview via `.claude/launch.json` config
   `expo-web` (never launch the dev server through Bash).
-- `npm test` — `node --test` unit suites (`timeMath`, `jobLogic`).
+- `npm test` — `node --test` unit suites (`timeMath`, `jobLogic`). Pure logic only.
+- `npm run test:integration` — end-to-end suite against the REAL Supabase project
+  (`__tests__/integration/`): RLS + tenant isolation, job lifecycle in Postgres,
+  the completed-job lock, sync/reconcile semantics, manager write-backs. Needs
+  `.env` + network, so it is deliberately **not** auto-discovered by `npm test`
+  and **not** in CI. It creates throwaway dealerships/users per run and deletes
+  them afterwards — it never touches real dealerships.
 - `npm run lint` — eslint (flat config, `eslint-config-expo`). `npm run format` — prettier.
 - `npx expo start -c` — clear Metro cache (needed after `.env` changes).
 
