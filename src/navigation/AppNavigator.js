@@ -1,6 +1,8 @@
 import React from 'react';
+import { View, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import SyncStatusBanner from '../components/SyncStatusBanner';
 import HomeScreen from '../screens/HomeScreen';
 import NewJobScreen from '../screens/NewJobScreen';
 import InProgressScreen from '../screens/InProgressScreen';
@@ -13,37 +15,45 @@ const Stack = createNativeStackNavigator();
 export default function AppNavigator() {
   return (
     <NavigationContainer>
-      <Stack.Navigator
-        initialRouteName="Home"
-        screenOptions={{
-          headerStyle: {
-            backgroundColor: '#667eea',
-          },
-          headerTintColor: '#fff',
-          headerTitleStyle: {
-            fontWeight: 'bold',
-          },
-        }}
-      >
-        <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
-        <Stack.Screen name="NewJob" component={NewJobScreen} options={{ title: 'New Job' }} />
-        <Stack.Screen
-          name="InProgress"
-          component={InProgressScreen}
-          options={{ title: 'In Progress' }}
-        />
-        <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'All Jobs' }} />
-        <Stack.Screen
-          name="JobDetail"
-          component={JobDetailScreen}
-          options={{ title: 'Job Details' }}
-        />
-        <Stack.Screen
-          name="ManageInviteCodes"
-          component={ManageInviteCodesScreen}
-          options={{ title: 'Invite Team' }}
-        />
-      </Stack.Navigator>
+      <View style={styles.root}>
+        <Stack.Navigator
+          initialRouteName="Home"
+          screenOptions={{
+            headerStyle: {
+              backgroundColor: '#667eea',
+            },
+            headerTintColor: '#fff',
+            headerTitleStyle: {
+              fontWeight: 'bold',
+            },
+          }}
+        >
+          <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
+          <Stack.Screen name="NewJob" component={NewJobScreen} options={{ title: 'New Job' }} />
+          <Stack.Screen
+            name="InProgress"
+            component={InProgressScreen}
+            options={{ title: 'In Progress' }}
+          />
+          <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'All Jobs' }} />
+          <Stack.Screen
+            name="JobDetail"
+            component={JobDetailScreen}
+            options={{ title: 'Job Details' }}
+          />
+          <Stack.Screen
+            name="ManageInviteCodes"
+            component={ManageInviteCodesScreen}
+            options={{ title: 'Invite Team' }}
+          />
+        </Stack.Navigator>
+        {/* Global: tells the detailer when work hasn't reached the server. */}
+        <SyncStatusBanner />
+      </View>
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1 },
+});

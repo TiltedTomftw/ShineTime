@@ -205,6 +205,13 @@ export default function NewJobScreen({ navigation }) {
           <Text style={styles.startButtonText}>Begin Detailing</Text>
         )}
       </TouchableOpacity>
+      {/* Say WHY the button is disabled — a scan often misses the stock number,
+          and a silently greyed-out button gave the detailer no explanation. */}
+      {!canStart && !loading && (
+        <Text style={styles.disabledHint}>
+          {scanning ? 'Scanning…' : 'Enter a Stock # above to start the job.'}
+        </Text>
+      )}
     </ScrollView>
   );
 }
@@ -255,4 +262,5 @@ const styles = StyleSheet.create({
     ...{ shadowOpacity: 0, elevation: 0 },
   },
   startButtonText: { color: colors.onAccent, fontSize: 17, fontWeight: '600' },
+  disabledHint: { ...type.footnote, textAlign: 'center', marginTop: spacing.sm },
 });

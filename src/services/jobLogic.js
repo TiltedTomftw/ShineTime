@@ -64,28 +64,64 @@ const mapSupabaseJobToLegacyShape = (row) => {
   };
 };
 
-// Offline-safe merge: keep the local copy of a job when its updatedAt is newer
-// than the server's (so unsynced local edits are not clobbered), otherwise take
-// the remote copy. Jobs present only locally are preserved. Result is sorted
-// newest-created first.
-const mergeJobsPreferLocalIfNewer = (localJobs, remoteJobs) => {
+// Offline-safe reconcile of the local cache against the server.
+//
+// Merge rule: keep the local copy when its updatedAt is newer than the server's
+// (so unsynced local edits are never clobbered), else take the remote copy.
+//
+// Delete rule (fixes "zombie jobs"): a local job that is absent from the server
+// is ambiguous — it's either an offline creation that hasn't pushed yet, or a
+// job that WAS on the server and has since been deleted. We disambiguate with
+// `syncedAt`, stamped once a job is confirmed present on the server:
+//   - absent + never synced   -> keep (pending local creation)
+//   - absent + previously synced -> DELETED remotely, drop it locally
+//
+// `liveJobIds` must be the FULL set of live job ids on the server, while
+// `remoteJobs` may be a narrower, role-scoped slice. Without that distinction a
+// job belonging to another detailer on a shared device (absent from the scoped
+// slice but alive on the server) would be mistaken for a deletion.
+//
+// Returns { jobs, deletedJobIds }; jobs are sorted newest-created first.
+const reconcileJobsWithRemote = (localJobs, remoteJobs, liveJobIds, now = Date.now()) => {
   const remoteById = new Map(ensureArray(remoteJobs).map((job) => [job.jobId, job]));
+  const liveIds = new Set(ensureArray(liveJobIds));
+  const deletedJobIds = [];
+  const result = new Map();
+
+  // Anything the server returned is by definition synced.
+  for (const [id, job] of remoteById) {
+    result.set(id, { ...job, syncedAt: job.syncedAt || now });
+  }
 
   for (const localJob of ensureArray(localJobs)) {
-    const remoteJob = remoteById.get(localJob.jobId);
-    if (!remoteJob) {
-      remoteById.set(localJob.jobId, localJob);
+    const id = localJob.jobId;
+    const remoteJob = remoteById.get(id);
+
+    if (remoteJob) {
+      const localUpdated = Number(localJob.updatedAt || 0);
+      const remoteUpdated = Number(remoteJob.updatedAt || 0);
+      if (localUpdated > remoteUpdated) {
+        result.set(id, { ...localJob, syncedAt: localJob.syncedAt || now });
+      }
       continue;
     }
 
-    const localUpdated = Number(localJob.updatedAt || 0);
-    const remoteUpdated = Number(remoteJob.updatedAt || 0);
-    if (localUpdated > remoteUpdated) {
-      remoteById.set(localJob.jobId, localJob);
+    if (liveIds.has(id)) {
+      // Alive on the server, just outside this scoped view — keep untouched.
+      result.set(id, { ...localJob, syncedAt: localJob.syncedAt || now });
+      continue;
     }
+
+    if (localJob.syncedAt) {
+      deletedJobIds.push(id); // was on the server, now gone => deleted
+      continue;
+    }
+
+    result.set(id, localJob); // never synced => offline creation, keep
   }
 
-  return Array.from(remoteById.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const jobs = Array.from(result.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  return { jobs, deletedJobIds };
 };
 
 const isRemoteNewer = (remoteClientUpdatedAt, localUpdatedAtMs) => {
@@ -125,13 +161,32 @@ const jobBelongsToOperator = (job, operatorId, operatorName) => {
   return (job.detailerName || '') === (operatorName || '');
 };
 
+// Turn raw sync state into something worth showing a detailer. Sync problems
+// were previously console.log-only — invisible on a phone — so a detailer could
+// finish a car with nothing actually saved to the server. Returns null when
+// there is nothing worth interrupting them about.
+const describeSyncStatus = ({ pendingCount = 0, lastError = null } = {}) => {
+  const pending = Math.max(0, Number(pendingCount) || 0);
+  if (pending > 0) {
+    return {
+      tone: 'warning',
+      message: `${pending} change${pending === 1 ? '' : 's'} not saved to the server yet — retrying automatically.`,
+    };
+  }
+  if (lastError) {
+    return { tone: 'error', message: `Sync problem: ${lastError}` };
+  }
+  return null;
+};
+
 module.exports = {
   sanitizeInput,
   ensureArray,
   parseTimestamp,
   mapSupabaseJobToLegacyShape,
-  mergeJobsPreferLocalIfNewer,
+  reconcileJobsWithRemote,
   isRemoteNewer,
   computeLiveElapsed,
   jobBelongsToOperator,
+  describeSyncStatus,
 };
