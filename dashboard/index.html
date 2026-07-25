@@ -823,8 +823,17 @@
 
 
     async function wipeDatabase() {
-      const confirmed = confirm('This will delete ALL jobs. Continue?');
-      if (!confirmed) return;
+      // Destructive and irreversible from the UI: soft-deletes EVERY job for this
+      // dealership. A single confirm() was far too easy to hit by accident, so
+      // require the word DELETE to be typed.
+      const typed = prompt(
+        'This soft-deletes ALL jobs for this dealership and cannot be undone from here.\n\n' +
+          'Type DELETE to confirm:'
+      );
+      if ((typed || '').trim().toUpperCase() !== 'DELETE') {
+        setStatus('Wipe cancelled', false);
+        return;
+      }
       try {
         await ensureSignedIn();
         const { error } = await supabaseClient
