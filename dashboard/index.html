@@ -838,8 +838,7 @@
           'Type DELETE to confirm:'
       );
       if ((typed || '').trim().toUpperCase() !== 'DELETE') {
-        setStatus('Wipe cancelled', false);
-        return;
+        return; // cancelled — nothing to do
       }
       try {
         await ensureSignedIn();
@@ -1212,7 +1211,6 @@
           });
         });
         closeModal(null, 'jobModal');
-        setStatus('Job reopened for rework');
         await loadDashboard();
       } catch (e) {
         alert('Could not reopen job: ' + e.message);
@@ -1241,7 +1239,6 @@
           });
         });
         closeModal(null, 'jobModal');
-        setStatus(`Reassigned to ${next}`);
         await loadDashboard();
       } catch (e) {
         alert('Could not reassign job: ' + e.message);

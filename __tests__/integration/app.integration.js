@@ -432,7 +432,74 @@ test("manager: a manager's change is newer, so the device accepts it", async () 
 });
 
 // =========================================================================
-// E. Detailer scoping
+// E. Photo upload — the ArrayBuffer path the app actually uses
+// =========================================================================
+
+test('photos: base64 decodes to the exact original bytes', () => {
+  const { decode } = require('base64-arraybuffer');
+  const original = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); // PNG magic
+  const roundTripped = Buffer.from(decode(original.toString('base64')));
+  assert.deepStrictEqual(roundTripped, original, 'decode must be byte-exact');
+});
+
+test('photos: a decoded ArrayBuffer uploads to the job-photos bucket and reads back', async () => {
+  const { decode } = require('base64-arraybuffer');
+  // 1x1 transparent PNG.
+  const b64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  const bytes = decode(b64); // exactly what addJobPhoto does — NOT fetch(data:)
+  const objectPath = `${world.alpha.id}/${RUN}/upload-test.png`;
+
+  const put = await fetch(`${BASE}/storage/v1/object/job-photos/${objectPath}`, {
+    method: 'POST',
+    headers: {
+      apikey: SVC,
+      Authorization: `Bearer ${SVC}`,
+      'Content-Type': 'image/png',
+      'x-upsert': 'true',
+    },
+    body: Buffer.from(bytes),
+  });
+  assert.ok(put.status < 300, `upload should succeed, got ${put.status} ${await put.text()}`);
+
+  // A signed URL must be mintable and serve back the identical bytes.
+  const signed = await fetch(`${BASE}/storage/v1/object/sign/job-photos/${objectPath}`, {
+    method: 'POST',
+    headers: { apikey: SVC, Authorization: `Bearer ${SVC}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expiresIn: 60 }),
+  });
+  assert.strictEqual(signed.status, 200, 'signed URL should be issued');
+  const { signedURL } = await signed.json();
+  const fetched = await fetch(`${BASE}/storage/v1${signedURL}`);
+  const downloaded = Buffer.from(await fetched.arrayBuffer());
+  assert.deepStrictEqual(downloaded, Buffer.from(bytes), 'downloaded bytes must match the upload');
+
+  await fetch(`${BASE}/storage/v1/object/job-photos/${objectPath}`, {
+    method: 'DELETE',
+    headers: { apikey: SVC, Authorization: `Bearer ${SVC}` },
+  });
+});
+
+test('photos: the photo row is written so the image survives signed-URL expiry', async () => {
+  const { id } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-PHOTO` });
+  const storagePath = `${world.alpha.id}/${id}/x.png`;
+  const res = await svc('job_photos', {
+    method: 'POST',
+    body: JSON.stringify({
+      job_id: id,
+      dealership_id: world.alpha.id,
+      uploaded_by_name: 'Alex',
+      storage_path: storagePath,
+      metadata: { mimeType: 'image/png' },
+    }),
+  });
+  assert.ok(res.status < 300, 'photo metadata row must persist');
+  const { body } = await svc(`job_photos?job_id=eq.${id}&select=storage_path`);
+  assert.strictEqual(body[0].storage_path, storagePath, 'path is recoverable for re-signing');
+});
+
+// =========================================================================
+// F. Detailer scoping
 // =========================================================================
 
 test('scoping: two detailers with the SAME NAME do not see each other jobs', () => {

@@ -8,7 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test": "node --test",
-    "test:integration": "node --test __tests__/integration/app.integration.js",
+    "test:integration": "node --test --test-concurrency=1 __tests__/integration/app.integration.js __tests__/integration/dashboard.integration.js",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
@@ -43,6 +43,7 @@
     "eslint": "^9.39.5",
     "eslint-config-expo": "^57.0.0",
     "eslint-config-prettier": "^10.1.8",
+    "jsdom": "^29.1.1",
     "prettier": "^3.9.5",
     "typescript": "~5.9.2"
   }
