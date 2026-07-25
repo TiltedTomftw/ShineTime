@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { decode as decodeBase64 } from 'base64-arraybuffer';
 import { supabase } from '../lib/supabase';
 import { computeActiveTime, computePauseDuration, accumulateDetailerTime } from './timeMath';
 import {
@@ -125,12 +126,6 @@ const getFileExtensionFromMime = (mimeType) => {
     default:
       return 'jpg';
   }
-};
-
-const base64ToBlob = async (base64, mimeType) => {
-  const dataUrl = `data:${mimeType || 'image/jpeg'};base64,${base64}`;
-  const response = await fetch(dataUrl);
-  return response.blob();
 };
 
 const signedUrlFromStoragePath = async (storagePath, expiresInSeconds = SIGNED_URL_TTL_SECONDS) => {
@@ -849,11 +844,13 @@ export const addJobPhoto = async (jobId, image) => {
   const extension = getFileExtensionFromMime(mimeType);
   const fileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${extension}`;
   const storagePath = `${context.dealershipId}/${remoteJobId}/${fileName}`;
-  const blob = await base64ToBlob(base64, mimeType);
+  // Decode base64 -> ArrayBuffer. Do NOT fetch() a data: URI here — React
+  // Native's fetch can't read data URIs and throws "Network request failed".
+  const fileBody = decodeBase64(base64);
 
   const { error: uploadError } = await supabase.storage
     .from('job-photos')
-    .upload(storagePath, blob, {
+    .upload(storagePath, fileBody, {
       contentType: mimeType,
       upsert: false,
     });
