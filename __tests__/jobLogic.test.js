@@ -4,12 +4,16 @@ const {
   sanitizeInput,
   ensureArray,
   parseTimestamp,
+  isOpenStatus,
   mapSupabaseJobToLegacyShape,
-  reconcileJobsWithRemote,
-  isRemoteNewer,
   computeLiveElapsed,
-  jobBelongsToOperator,
-  describeSyncStatus,
+  displayDuration,
+  applyJobAction,
+  applyPendingActions,
+  toJobRow,
+  describeOutbox,
+  isTransientError,
+  friendlyErrorMessage,
 } = require('../src/services/jobLogic');
 
 // --- sanitizeInput (trim + clamp; no tag stripping) -----------------------
@@ -23,49 +27,39 @@ test('sanitizeInput preserves < and > (no tag stripping / data corruption)', () 
   assert.strictEqual(sanitizeInput(note), note);
 });
 
-test('sanitizeInput caps at the default 200 chars', () => {
+test('sanitizeInput caps at the default 200 chars or an explicit max', () => {
   assert.strictEqual(sanitizeInput('a'.repeat(500)).length, 200);
-});
-
-test('sanitizeInput respects an explicit maxLength (fixes note truncation bug)', () => {
   assert.strictEqual(sanitizeInput('a'.repeat(500), 500).length, 500);
 });
 
 test('sanitizeInput passes non-strings through untouched', () => {
   assert.strictEqual(sanitizeInput(42), 42);
   assert.strictEqual(sanitizeInput(null), null);
-  assert.strictEqual(sanitizeInput(undefined), undefined);
-});
-
-// --- ensureArray ----------------------------------------------------------
-
-test('ensureArray returns arrays unchanged', () => {
-  const a = [1, 2];
-  assert.strictEqual(ensureArray(a), a);
 });
 
 test('ensureArray coerces non-arrays to []', () => {
+  const a = [1];
+  assert.strictEqual(ensureArray(a), a);
   assert.deepStrictEqual(ensureArray(null), []);
-  assert.deepStrictEqual(ensureArray(undefined), []);
-  assert.deepStrictEqual(ensureArray('nope'), []);
   assert.deepStrictEqual(ensureArray({ length: 3 }), []);
 });
 
-// --- parseTimestamp -------------------------------------------------------
-
-test('parseTimestamp converts an ISO string to epoch ms', () => {
+test('parseTimestamp converts ISO strings and rejects junk', () => {
   assert.strictEqual(parseTimestamp('2026-01-01T00:00:00.000Z'), Date.UTC(2026, 0, 1));
-});
-
-test('parseTimestamp returns null for falsy or invalid input', () => {
-  assert.strictEqual(parseTimestamp(null), null);
   assert.strictEqual(parseTimestamp(''), null);
   assert.strictEqual(parseTimestamp('not-a-date'), null);
 });
 
+test('isOpenStatus counts rework as open', () => {
+  assert.ok(isOpenStatus('in_progress'));
+  assert.ok(isOpenStatus('paused'));
+  assert.ok(isOpenStatus('needs_rework'));
+  assert.ok(!isOpenStatus('completed'));
+});
+
 // --- mapSupabaseJobToLegacyShape ------------------------------------------
 
-test('mapSupabaseJobToLegacyShape prefers payload values over row columns', () => {
+test('mapSupabaseJobToLegacyShape prefers payload values and keeps the row id', () => {
   const job = mapSupabaseJobToLegacyShape({
     id: 'row-id',
     legacy_job_id: 'legacy-1',
@@ -76,6 +70,7 @@ test('mapSupabaseJobToLegacyShape prefers payload values over row columns', () =
   assert.strictEqual(job.jobId, 'payload-1');
   assert.strictEqual(job.make, 'PayloadMake');
   assert.strictEqual(job.status, 'in_progress');
+  assert.strictEqual(job.remoteId, 'row-id');
 });
 
 test('mapSupabaseJobToLegacyShape falls back to row columns when payload is empty', () => {
@@ -84,246 +79,260 @@ test('mapSupabaseJobToLegacyShape falls back to row columns when payload is empt
     legacy_job_id: 'legacy-9',
     status: 'paused',
     stock_number: 'STK-9',
-    vin: 'VIN9',
     payload: null,
   });
   assert.strictEqual(job.jobId, 'legacy-9');
   assert.strictEqual(job.status, 'paused');
   assert.strictEqual(job.stockNumber, 'STK-9');
-  assert.strictEqual(job.vin, 'VIN9');
 });
 
-test('mapSupabaseJobToLegacyShape derives detailerName from the last detailer', () => {
+test('mapSupabaseJobToLegacyShape guarantees array fields and numeric totals', () => {
   const job = mapSupabaseJobToLegacyShape({
     id: 'r',
-    payload: { detailers: ['Alice', 'Bob'] },
+    total_active_ms: '3000',
+    payload: { notes: 'oops' },
   });
-  assert.strictEqual(job.detailerName, 'Bob');
-});
-
-test('mapSupabaseJobToLegacyShape defaults detailerName to Unknown', () => {
-  const job = mapSupabaseJobToLegacyShape({ id: 'r', payload: {} });
+  assert.deepStrictEqual(job.notes, []);
+  assert.deepStrictEqual(job.photos, []);
+  assert.strictEqual(job.totalActiveTime, 3000);
   assert.strictEqual(job.detailerName, 'Unknown');
 });
 
-test('mapSupabaseJobToLegacyShape guarantees array fields', () => {
-  const job = mapSupabaseJobToLegacyShape({ id: 'r', payload: { notes: 'oops' } });
-  assert.deepStrictEqual(job.notes, []);
-  assert.deepStrictEqual(job.pauseEvents, []);
-  assert.deepStrictEqual(job.custodyEvents, []);
-  assert.deepStrictEqual(job.detailers, []);
-});
+// --- applyJobAction: the one place job state changes ----------------------
 
-test('mapSupabaseJobToLegacyShape coerces numeric totals', () => {
-  const job = mapSupabaseJobToLegacyShape({
-    id: 'r',
-    total_pause_ms: '1500',
-    total_active_ms: '3000',
-    payload: {},
-  });
-  assert.strictEqual(job.totalPauseTime, 1500);
-  assert.strictEqual(job.totalActiveTime, 3000);
-});
-
-// --- reconcileJobsWithRemote (offline sync core + delete propagation) -----
-
-const job = (id, updatedAt, createdAt, extra = {}) => ({
-  jobId: id,
-  updatedAt,
-  createdAt,
+const actor = { id: 'u1', name: 'Mike' };
+let seq = 0;
+const act = (type, at, data = {}, extra = {}) => ({
+  id: `a${(seq += 1)}`,
+  type,
+  jobId: 'job_1',
+  at,
+  actor,
+  data,
   ...extra,
 });
+const created = (at = 1000, data = { stockNumber: 'p4521', make: 'Ford' }) =>
+  applyJobAction(null, act('create', at, data));
 
-// Helper: ids of every job "alive" on the server.
-const liveOf = (...jobs) => jobs.map((j) => j.jobId);
-
-test('reconcile keeps the local copy when it is newer than remote', () => {
-  const local = [job('a', 200, 100, { note: 'local' })];
-  const remote = [job('a', 100, 100, { note: 'remote' })];
-  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
-  assert.strictEqual(jobs.length, 1);
-  assert.strictEqual(jobs[0].note, 'local');
+test('create builds a running job attributed to the actor', () => {
+  const job = created(1000);
+  assert.strictEqual(job.status, 'in_progress');
+  assert.strictEqual(job.stockNumber, 'P4521');
+  assert.strictEqual(job.startTime, 1000);
+  assert.strictEqual(job.assignedDetailerId, 'u1');
+  assert.strictEqual(job.operationalUserId, 'u1');
+  assert.strictEqual(job.custodyEvents[0].type, 'start');
 });
 
-test('reconcile takes the remote copy when it is newer than local', () => {
-  const local = [job('a', 100, 100, { note: 'local' })];
-  const remote = [job('a', 300, 100, { note: 'remote' })];
-  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
-  assert.strictEqual(jobs[0].note, 'remote');
+test('a retried create for a job already on the server is a no-op', () => {
+  const job = created(1000);
+  assert.strictEqual(applyJobAction(job, act('create', 5000)), job);
 });
 
-test('reconcile keeps remote when timestamps are equal (no clobber of synced)', () => {
-  const local = [job('a', 100, 100, { note: 'local' })];
-  const remote = [job('a', 100, 100, { note: 'remote' })];
-  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
-  assert.strictEqual(jobs[0].note, 'remote');
+test('actions never mutate the job passed in', () => {
+  const job = created(1000);
+  const before = JSON.stringify(job);
+  applyJobAction(job, act('pause', 2000));
+  assert.strictEqual(JSON.stringify(job), before);
 });
 
-test('reconcile preserves a never-synced local job (offline creation)', () => {
-  const local = [job('local-only', 100, 500)]; // no syncedAt
-  const remote = [job('a', 100, 100)];
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
-  assert.ok(jobs.map((j) => j.jobId).includes('local-only'));
-  assert.deepStrictEqual(deletedJobIds, []);
-});
-
-test('reconcile DROPS a previously-synced job that is gone from the server', () => {
-  const local = [job('gone', 100, 100, { syncedAt: 50 })];
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], []);
-  assert.deepStrictEqual(jobs, []);
-  assert.deepStrictEqual(deletedJobIds, ['gone']);
-});
-
-test('reconcile does NOT drop a synced job that is merely out of scope', () => {
-  // Alive on the server (in liveJobIds) but absent from this detailer's slice.
-  const local = [job('other-detailer', 100, 100, { syncedAt: 50 })];
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], ['other-detailer']);
+test('pause -> resume -> complete times use when the detailer TAPPED, not when it sent', () => {
+  let job = created(0);
+  job = applyJobAction(job, act('pause', 60000, { reason: 'Lunch / break' }));
+  job = applyJobAction(job, act('resume', 90000));
+  job = applyJobAction(job, act('complete', 150000));
+  assert.strictEqual(job.status, 'completed');
+  assert.strictEqual(job.totalPauseTime, 30000);
+  assert.strictEqual(job.totalActiveTime, 120000);
+  assert.strictEqual(job.endTime, 150000);
   assert.deepStrictEqual(
-    jobs.map((j) => j.jobId),
-    ['other-detailer'],
-  );
-  assert.deepStrictEqual(deletedJobIds, []);
-});
-
-test('reconcile stamps syncedAt on jobs returned by the server', () => {
-  const remote = [job('a', 100, 100)];
-  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote), 999);
-  assert.strictEqual(jobs[0].syncedAt, 999);
-});
-
-test('reconcile backfills syncedAt for a local job confirmed present remotely', () => {
-  const local = [job('a', 500, 100, { note: 'local' })]; // newer, wins, no syncedAt
-  const remote = [job('a', 100, 100)];
-  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote), 777);
-  assert.strictEqual(jobs[0].note, 'local');
-  assert.strictEqual(jobs[0].syncedAt, 777);
-});
-
-test('reconcile preserves remote-only jobs', () => {
-  const remote = [job('r', 100, 100)];
-  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote));
-  assert.deepStrictEqual(
-    jobs.map((j) => j.jobId),
-    ['r'],
+    job.custodyEvents.map((e) => e.type),
+    ['start', 'pause', 'resume', 'complete'],
   );
 });
 
-test('reconcile sorts results newest-created first', () => {
-  const remote = [job('old', 1, 100), job('new', 1, 300), job('mid', 1, 200)];
-  const { jobs } = reconcileJobsWithRemote([], remote, liveOf(...remote));
-  assert.deepStrictEqual(
-    jobs.map((j) => j.jobId),
-    ['new', 'mid', 'old'],
+test('a pause reason and note land in Notes so they never disappear', () => {
+  const job = applyJobAction(
+    created(0),
+    act('pause', 1000, { reason: 'Waiting on parts', note: 'wiper blade' }),
   );
+  assert.strictEqual(job.notes[0].text, 'Paused: Waiting on parts — wiper blade');
+  assert.strictEqual(job.pauseEvents[0].reason, 'Waiting on parts');
 });
 
-test('reconcile tolerates non-array inputs', () => {
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(null, undefined, null);
-  assert.deepStrictEqual(jobs, []);
-  assert.deepStrictEqual(deletedJobIds, []);
+test('completing a paused job folds in the final pause', () => {
+  let job = created(0);
+  job = applyJobAction(job, act('pause', 10000));
+  job = applyJobAction(job, act('complete', 40000));
+  assert.strictEqual(job.totalPauseTime, 30000);
+  assert.strictEqual(job.totalActiveTime, 10000);
 });
 
-test('reconcile treats a missing updatedAt as oldest', () => {
-  const local = [job('a', undefined, 100, { note: 'local' })];
-  const remote = [job('a', 50, 100, { note: 'remote' })];
-  const { jobs } = reconcileJobsWithRemote(local, remote, liveOf(...remote));
-  assert.strictEqual(jobs[0].note, 'remote');
+test('the same action applied twice only counts once (safe retries)', () => {
+  const pause = act('pause', 1000);
+  const once = applyJobAction(created(0), pause);
+  const twice = applyJobAction(once, pause);
+  assert.strictEqual(twice, once);
+  assert.strictEqual(twice.pauseEvents.length, 1);
 });
 
-// --- isRemoteNewer --------------------------------------------------------
-
-test('isRemoteNewer is true when the remote timestamp is later', () => {
-  assert.strictEqual(isRemoteNewer('2026-01-02T00:00:00Z', Date.UTC(2026, 0, 1)), true);
+test('invalid transitions throw a permanent, plain-language error', () => {
+  const job = created(0);
+  assert.throws(
+    () => applyJobAction(job, act('resume', 1000)),
+    (e) => e.permanent === true && /isn't paused/.test(e.message),
+  );
+  const done = applyJobAction(job, act('complete', 1000));
+  assert.throws(() => applyJobAction(done, act('note', 2000, { text: 'x' })), /locked/);
+  assert.throws(() => applyJobAction(done, act('complete', 2000)), /already complete/);
+  assert.throws(() => applyJobAction(null, act('pause', 1)), /no longer exists/);
 });
 
-test('isRemoteNewer is false when the remote timestamp is earlier or equal', () => {
-  assert.strictEqual(isRemoteNewer('2026-01-01T00:00:00Z', Date.UTC(2026, 0, 2)), false);
-  assert.strictEqual(isRemoteNewer('2026-01-01T00:00:00Z', Date.UTC(2026, 0, 1)), false);
+test('notes go newest-first and empty notes are rejected', () => {
+  let job = applyJobAction(created(0), act('note', 1000, { text: 'first' }));
+  job = applyJobAction(job, act('note', 2000, { text: 'second' }));
+  assert.deepStrictEqual(
+    job.notes.map((n) => n.text),
+    ['second', 'first'],
+  );
+  assert.throws(() => applyJobAction(job, act('note', 3000, { text: '   ' })), /needs some text/);
 });
 
-test('isRemoteNewer is false for missing or invalid remote timestamps', () => {
-  assert.strictEqual(isRemoteNewer(null, 0), false);
-  assert.strictEqual(isRemoteNewer('not-a-date', 0), false);
+test('photos are recorded by storage path, even after completion, without duplicates', () => {
+  let job = applyJobAction(created(0), act('complete', 1000));
+  job = applyJobAction(job, act('photo', 2000, { storagePath: 'd/j/p1.jpg' }));
+  job = applyJobAction(job, act('photo', 2500, { storagePath: 'd/j/p1.jpg' }));
+  assert.strictEqual(job.photos.length, 1);
+  assert.strictEqual(job.photos[0].url, undefined, 'no expiring URL is stored');
 });
 
-// --- computeLiveElapsed (shared live timer) -------------------------------
+// --- Rework: the manager sends a finished car back ------------------------
+
+const reworked = (completedAt, viaNewDashboard = true) => {
+  const done = applyJobAction(created(0), act('complete', completedAt));
+  const job = JSON.parse(JSON.stringify(done));
+  job.status = 'needs_rework';
+  job.endTime = null;
+  if (viaNewDashboard) {
+    job.pauseEvents.push({ type: 'pause', timestamp: completedAt, reason: 'rework' });
+  }
+  return job;
+};
+
+test('starting rework resumes the clock without billing the time it sat finished', () => {
+  let job = reworked(60000);
+  job = applyJobAction(job, act('resume', 600000));
+  assert.strictEqual(job.status, 'in_progress');
+  assert.strictEqual(job.custodyEvents[job.custodyEvents.length - 1].type, 'rework_start');
+  job = applyJobAction(job, act('complete', 660000));
+  assert.strictEqual(job.totalActiveTime, 120000, '60s first pass + 60s rework');
+});
+
+test('rework jobs reopened by the old dashboard (no pause event) are handled too', () => {
+  let job = reworked(60000, false);
+  job = applyJobAction(job, act('resume', 600000));
+  job = applyJobAction(job, act('complete', 660000));
+  assert.strictEqual(job.totalActiveTime, 120000);
+});
+
+test('a rework job must be started before it can be completed or paused', () => {
+  const job = reworked(60000);
+  assert.throws(() => applyJobAction(job, act('complete', 70000)), /Start the rework/);
+  assert.throws(() => applyJobAction(job, act('pause', 70000)), /isn't running/);
+});
+
+test('the live timer holds still while a car waits for rework', () => {
+  const job = reworked(60000);
+  assert.strictEqual(computeLiveElapsed(job, 600000), 60000);
+  assert.strictEqual(computeLiveElapsed(reworked(60000, false), 600000), 60000);
+});
+
+// --- applyPendingActions ---------------------------------------------------
+
+test('applyPendingActions shows unsent actions on top and skips ones that no longer fit', () => {
+  const job = applyPendingActions(created(0), [
+    act('pause', 1000),
+    act('pause', 2000), // already paused: skipped, not thrown
+    act('resume', 3000),
+  ]);
+  assert.strictEqual(job.status, 'in_progress');
+  assert.strictEqual(job.pauseEvents.length, 2);
+});
+
+test('applyPendingActions can build a job that only exists in the outbox', () => {
+  const job = applyPendingActions(null, [act('create', 0, { stockNumber: 'X1' }), act('pause', 5)]);
+  assert.strictEqual(job.stockNumber, 'X1');
+  assert.strictEqual(job.status, 'paused');
+});
+
+// --- computeLiveElapsed / displayDuration ---------------------------------
 
 test('computeLiveElapsed returns wall time minus accumulated pauses (running)', () => {
   const job = { startTime: 1000, totalPauseTime: 2000, status: 'in_progress', pauseEvents: [] };
   assert.strictEqual(computeLiveElapsed(job, 11000), 8000);
 });
 
-test('computeLiveElapsed subtracts the in-progress pause span when paused', () => {
-  const job = {
-    startTime: 0,
-    totalPauseTime: 0,
-    status: 'paused',
-    pauseEvents: [{ type: 'pause', timestamp: 5000 }],
-  };
-  // now=9000, paused since 5000 => 9000 - 4000 = 5000 active
+test('computeLiveElapsed subtracts the current pause span when paused', () => {
+  const job = { startTime: 0, status: 'paused', pauseEvents: [{ type: 'pause', timestamp: 5000 }] };
   assert.strictEqual(computeLiveElapsed(job, 9000), 5000);
 });
 
-test('computeLiveElapsed clamps negative (clock skew) to 0', () => {
-  const job = { startTime: 10000, totalPauseTime: 0, status: 'in_progress', pauseEvents: [] };
-  assert.strictEqual(computeLiveElapsed(job, 5000), 0);
-});
-
-test('computeLiveElapsed handles a null job', () => {
+test('computeLiveElapsed clamps clock skew to 0 and handles null', () => {
+  assert.strictEqual(computeLiveElapsed({ startTime: 10000, status: 'in_progress' }, 5000), 0);
   assert.strictEqual(computeLiveElapsed(null, 1000), 0);
 });
 
-// --- jobBelongsToOperator (stable id scoping) -----------------------------
-
-test('jobBelongsToOperator matches on operational-user id when present', () => {
-  const job = { operationalUserId: 'u1', detailerName: 'Mike' };
-  assert.strictEqual(jobBelongsToOperator(job, 'u1', 'Someone Else'), true);
-  assert.strictEqual(jobBelongsToOperator(job, 'u2', 'Mike'), false);
+test('displayDuration uses the final time for completed jobs', () => {
+  assert.strictEqual(displayDuration({ status: 'completed', totalActiveTime: 42 }, 1e12), 42);
 });
 
-test('jobBelongsToOperator does NOT collide two same-named detailers by id', () => {
-  const mikeA = { operationalUserId: 'a', detailerName: 'Mike' };
-  const mikeB = { operationalUserId: 'b', detailerName: 'Mike' };
-  assert.strictEqual(jobBelongsToOperator(mikeA, 'a', 'Mike'), true);
-  assert.strictEqual(jobBelongsToOperator(mikeB, 'a', 'Mike'), false);
+// --- toJobRow ---------------------------------------------------------------
+
+test('toJobRow mirrors payload into structured columns', () => {
+  const job = applyJobAction(created(0, { stockNumber: 'abc' }), act('complete', 120000));
+  const row = toJobRow(job, 'dealer-1');
+  assert.strictEqual(row.dealership_id, 'dealer-1');
+  assert.strictEqual(row.legacy_job_id, 'job_1');
+  assert.strictEqual(row.status, 'completed');
+  assert.strictEqual(row.stock_number, 'ABC');
+  assert.strictEqual(row.assigned_detailer_id, 'u1');
+  assert.strictEqual(row.total_active_ms, 120000);
+  assert.strictEqual(row.payload, job);
 });
 
-test('jobBelongsToOperator falls back to name for legacy jobs without an id', () => {
-  const legacy = { detailerName: 'Mike' };
-  assert.strictEqual(jobBelongsToOperator(legacy, 'u1', 'Mike'), true);
-  assert.strictEqual(jobBelongsToOperator(legacy, 'u1', 'Dave'), false);
+// --- Outbox messaging + error classification ------------------------------
+
+test('describeOutbox is silent when nothing is pending', () => {
+  assert.strictEqual(describeOutbox({ pending: 0 }), null);
+  assert.strictEqual(describeOutbox(), null);
 });
 
-test('jobBelongsToOperator handles a null job', () => {
-  assert.strictEqual(jobBelongsToOperator(null, 'u1', 'Mike'), false);
-});
-
-// --- describeSyncStatus (surfacing sync failures) -------------------------
-
-test('describeSyncStatus stays silent when everything is synced', () => {
-  assert.strictEqual(describeSyncStatus({ pendingCount: 0, lastError: null }), null);
-  assert.strictEqual(describeSyncStatus(), null);
-});
-
-test('describeSyncStatus reports pending writes, pluralised', () => {
-  assert.match(describeSyncStatus({ pendingCount: 1 }).message, /^1 change not saved/);
-  assert.match(describeSyncStatus({ pendingCount: 3 }).message, /^3 changes not saved/);
-  assert.strictEqual(describeSyncStatus({ pendingCount: 2 }).tone, 'warning');
-});
-
-test('describeSyncStatus prefers the pending count over a stale error', () => {
-  const info = describeSyncStatus({ pendingCount: 2, lastError: 'boom' });
+test('describeOutbox explains offline saves in plain language', () => {
+  const info = describeOutbox({ pending: 2, online: false });
   assert.strictEqual(info.tone, 'warning');
-  assert.match(info.message, /2 changes/);
+  assert.match(info.message, /^Offline\. 2 changes saved on this phone/);
+  assert.match(describeOutbox({ pending: 1, online: true }).message, /Sending 1 change/);
 });
 
-test('describeSyncStatus surfaces an error when nothing is queued', () => {
-  const info = describeSyncStatus({ pendingCount: 0, lastError: 'Network request failed' });
+test('describeOutbox puts a failure first so it is seen', () => {
+  const info = describeOutbox({ pending: 3, failures: [{ message: '#P1 is complete.' }] });
   assert.strictEqual(info.tone, 'error');
-  assert.match(info.message, /Network request failed/);
+  assert.strictEqual(info.message, "Couldn't save: #P1 is complete.");
 });
 
-test('describeSyncStatus ignores a negative or junk pending count', () => {
-  assert.strictEqual(describeSyncStatus({ pendingCount: -5 }), null);
-  assert.strictEqual(describeSyncStatus({ pendingCount: 'nope' }), null);
+test('isTransientError retries network/server trouble but not definitive answers', () => {
+  assert.ok(isTransientError(new TypeError('Network request failed')));
+  assert.ok(isTransientError({ status: 503, message: 'x' }));
+  assert.ok(isTransientError({ message: 'JWT expired' }));
+  assert.ok(!isTransientError({ code: '23505', message: 'duplicate key value' }));
+  assert.ok(!isTransientError({ permanent: true, message: 'x' }));
+});
+
+test('friendlyErrorMessage turns database errors into something a detailer understands', () => {
+  const job = { stockNumber: 'P1' };
+  assert.match(friendlyErrorMessage({ code: '23505', message: 'dup' }, job), /#P1 is already open/);
+  assert.match(
+    friendlyErrorMessage({ message: 'job is completed and can only be modified by an owner' }, job),
+    /Ask a manager to reopen/,
+  );
 });

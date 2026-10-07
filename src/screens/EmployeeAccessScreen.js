@@ -1,153 +1,260 @@
 import React from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { supabase } from '../lib/supabase';
+import AuthLayout from '../components/AuthLayout';
+import { Button, Field } from '../components/ui';
+import { colors, radius, spacing, type } from '../theme';
 
-// The employee entry point: an invite code, their name, and a PIN. Employees
-// never see the dealership's email/password — the `employee-access` Edge
-// Function validates the code, creates (or signs in) their own account, and
-// redeems the code on their behalf.
+// The employee entry point. Employees never see a dealership login: the
+// `employee-access` Edge Function checks the code, signs them in (or creates
+// their account), and returns a session.
 //
-// The same three fields cover a first-time join AND a later sign-in, including
-// on a new device, because the function derives the same account either way.
+// Two modes so returning staff aren't asked to "create" anything, and so a new
+// name is confirmed before an account is made — typing "Mike Smith" when you
+// joined as "Mike" must not silently create a second person.
+const MODES = {
+  signin: {
+    tab: "I've signed in before",
+    codeLabel: 'Dealership code',
+    codeHint: 'Any invite code from your dealership works, even an old one.',
+    pinLabel: 'Your PIN',
+    submit: 'Sign in',
+  },
+  join: {
+    tab: "I'm new here",
+    codeLabel: 'Invite code',
+    codeHint: 'Your manager gives you this.',
+    pinLabel: 'Choose a PIN (4–6 digits)',
+    submit: 'Join',
+  },
+};
+
 export default function EmployeeAccessScreen({ onManagerSignIn }) {
+  const [mode, setMode] = React.useState('signin');
   const [code, setCode] = React.useState('');
   const [name, setName] = React.useState('');
   const [pin, setPin] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const [confirming, setConfirming] = React.useState(null); // { dealershipName, name }
+  const nameRef = React.useRef(null);
+  const pinRef = React.useRef(null);
 
-  const canSubmit = code.trim().length >= 4 && name.trim().length > 0 && pin.trim().length >= 4;
+  const copy = MODES[mode];
+  const canSubmit = code.trim().length >= 4 && name.trim().length > 0 && pin.length >= 4;
 
-  const handleSubmit = async () => {
+  const switchMode = (next) => {
+    setMode(next);
+    setError('');
+    setConfirming(null);
+  };
+
+  const submit = async (confirmNew = false) => {
     if (!canSubmit || submitting) return;
     setSubmitting(true);
+    setError('');
     try {
-      const { data, error } = await supabase.functions.invoke('employee-access', {
-        body: { code: code.trim(), name: name.trim(), pin: pin.trim() },
+      const { data, error: fnError } = await supabase.functions.invoke('employee-access', {
+        body: { code: code.trim(), name: name.trim(), pin, mode, confirmNew },
       });
 
-      // Non-2xx responses surface the function's message rather than a generic one.
-      const message = data?.error || error?.context?.error;
+      // Non-2xx responses carry the function's own message.
+      let message = data?.error;
+      if (!message && fnError?.context?.json) {
+        try {
+          message = (await fnError.context.json())?.error;
+        } catch {
+          // fall through to the generic message
+        }
+      }
+      if (!message && fnError?.context?.error) message = fnError.context.error;
       if (message) throw new Error(message);
-      if (error) throw error;
-      if (!data?.access_token) throw new Error('Could not start your session.');
+      if (fnError) throw new Error("Can't reach Shinetime. Check your signal and try again.");
 
-      // Signing in flips AuthContext's onAuthStateChange, which loads memberships
-      // and drops the app straight onto the detailer home screen.
+      if (data?.needsConfirm) {
+        setConfirming({
+          dealershipName: data.dealership?.name || 'this dealership',
+          name: data.name,
+        });
+        return;
+      }
+      if (!data?.access_token) throw new Error('Could not start your session. Try again.');
+
+      // Signing in flips AuthContext's onAuthStateChange, which opens the app.
       const { error: sessionError } = await supabase.auth.setSession({
         access_token: data.access_token,
         refresh_token: data.refresh_token,
       });
       if (sessionError) throw sessionError;
     } catch (e) {
-      Alert.alert('Could not sign in', e?.message || 'Please check your code, name and PIN.');
+      const message = e?.message || 'Please check your code, name and PIN.';
+      setError(message);
     } finally {
       setSubmitting(false);
     }
   };
 
-  return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <View style={styles.content}>
-        <Text style={styles.title}>Shinetime</Text>
-        <Text style={styles.subtitle}>Enter the invite code from your manager.</Text>
-
-        <TextInput
-          style={[styles.input, styles.codeInput]}
-          value={code}
-          onChangeText={(t) =>
-            setCode(
-              t
-                .replace(/[^a-zA-Z0-9]/g, '')
-                .toUpperCase()
-                .slice(0, 12),
-            )
-          }
-          placeholder="Invite code"
-          autoCapitalize="characters"
-          autoCorrect={false}
-          editable={!submitting}
-        />
-        <TextInput
-          style={styles.input}
-          value={name}
-          onChangeText={(t) => setName(t.slice(0, 50))}
-          placeholder="Your name"
-          autoCapitalize="words"
-          autoCorrect={false}
-          editable={!submitting}
-        />
-        <TextInput
-          style={styles.input}
-          value={pin}
-          onChangeText={(t) => setPin(t.replace(/[^0-9]/g, '').slice(0, 6))}
-          placeholder="Create a PIN (4-6 digits)"
-          keyboardType="number-pad"
-          secureTextEntry
-          editable={!submitting}
-        />
-
-        <TouchableOpacity
-          style={[styles.primaryButton, (!canSubmit || submitting) && styles.disabled]}
-          onPress={handleSubmit}
-          disabled={!canSubmit || submitting}
-        >
-          <Text style={styles.primaryButtonText}>
-            {submitting ? 'Please wait...' : 'Start Detailing'}
-          </Text>
-        </TouchableOpacity>
-
-        <Text style={styles.hint}>
-          Returning? Enter the same code, name and PIN to sign back in.
+  if (confirming) {
+    return (
+      <AuthLayout subtitle="One more check">
+        <Text style={styles.confirmTitle}>
+          Join {confirming.dealershipName} as {confirming.name}?
         </Text>
+        <Text style={styles.confirmBody}>
+          Use this exact name every time you sign in. If you&apos;ve used Shinetime here before
+          under a different name, go back and sign in with that name instead.
+        </Text>
+        <Button
+          title={`Yes, I'm ${confirming.name}`}
+          onPress={() => submit(true)}
+          loading={submitting}
+          style={styles.submit}
+        />
+        <Button title="Go back" variant="ghost" onPress={() => setConfirming(null)} />
+      </AuthLayout>
+    );
+  }
 
-        {onManagerSignIn && (
-          <TouchableOpacity style={styles.linkBtn} onPress={onManagerSignIn}>
-            <Text style={styles.linkText}>Manager sign-in</Text>
-          </TouchableOpacity>
-        )}
+  return (
+    <AuthLayout
+      subtitle="Sign in to start detailing"
+      footer={
+        onManagerSignIn ? (
+          <Pressable
+            onPress={onManagerSignIn}
+            accessibilityRole="button"
+            style={styles.managerLink}
+            hitSlop={8}
+          >
+            <Text style={styles.managerLinkText}>Manager sign-in</Text>
+          </Pressable>
+        ) : null
+      }
+    >
+      <View style={styles.tabs} accessibilityRole="tablist">
+        {Object.entries(MODES).map(([key, m]) => (
+          <Pressable
+            key={key}
+            onPress={() => switchMode(key)}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: mode === key }}
+            style={[styles.tab, mode === key && styles.tabActive]}
+          >
+            <Text style={[styles.tabText, mode === key && styles.tabTextActive]}>{m.tab}</Text>
+          </Pressable>
+        ))}
       </View>
-    </KeyboardAvoidingView>
+
+      <Field
+        label={copy.codeLabel}
+        hint={copy.codeHint}
+        value={code}
+        onChangeText={(t) =>
+          setCode(
+            t
+              .replace(/[^a-zA-Z0-9]/g, '')
+              .toUpperCase()
+              .slice(0, 12),
+          )
+        }
+        placeholder="e.g. K7M3QPX"
+        autoCapitalize="characters"
+        autoCorrect={false}
+        editable={!submitting}
+        inputStyle={styles.codeInput}
+        returnKeyType="next"
+        onSubmitEditing={() => nameRef.current?.focus()}
+        testID="code-input"
+      />
+      <Field
+        ref={nameRef}
+        label="Your name"
+        hint={
+          mode === 'signin' ? 'Exactly as you entered it when you joined.' : 'First and last name.'
+        }
+        value={name}
+        onChangeText={(t) => setName(t.slice(0, 50))}
+        placeholder="e.g. Mike Smith"
+        autoCapitalize="words"
+        autoCorrect={false}
+        autoComplete="name"
+        textContentType="name"
+        editable={!submitting}
+        returnKeyType="next"
+        onSubmitEditing={() => pinRef.current?.focus()}
+        testID="name-input"
+      />
+      <Field
+        ref={pinRef}
+        label={copy.pinLabel}
+        value={pin}
+        onChangeText={(t) => setPin(t.replace(/[^0-9]/g, '').slice(0, 6))}
+        placeholder="••••"
+        keyboardType="number-pad"
+        secureTextEntry
+        editable={!submitting}
+        returnKeyType="go"
+        onSubmitEditing={() => submit(false)}
+        error={error}
+        testID="pin-input"
+      />
+
+      <Button
+        title={copy.submit}
+        onPress={() => submit(false)}
+        disabled={!canSubmit}
+        loading={submitting}
+        style={styles.submit}
+        testID="submit"
+      />
+      {mode === 'signin' ? (
+        <Text style={styles.help}>Forgot your PIN? Your manager can reset it.</Text>
+      ) : null}
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#667eea' },
-  content: { flex: 1, justifyContent: 'center', padding: 24 },
-  title: { fontSize: 36, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 15, color: '#e0e7ff', textAlign: 'center', marginBottom: 24 },
-  input: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 10,
-    fontSize: 16,
-    marginBottom: 12,
+  tabs: {
+    flexDirection: 'row',
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    padding: 4,
+    marginBottom: spacing.xl,
   },
-  codeInput: { fontSize: 18, letterSpacing: 2, textAlign: 'center' },
-  primaryButton: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 16,
+  tab: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: radius.sm,
     alignItems: 'center',
-    marginTop: 6,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xs,
   },
-  disabled: { opacity: 0.6 },
-  primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
-  hint: { color: '#e0e7ff', fontSize: 13, textAlign: 'center', marginTop: 14 },
-  // Pushed well clear of the "Returning?" hint and de-emphasised: employees are
-  // the primary audience here, so the manager route shouldn't compete for
-  // attention or read as a second block of instructions.
-  linkBtn: { marginTop: 56, alignItems: 'center', paddingVertical: 8 },
-  linkText: { color: 'rgba(255,255,255,0.75)', fontWeight: '600', fontSize: 13 },
+  tabActive: {
+    backgroundColor: colors.card,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 1,
+  },
+  tabText: { fontSize: 14, fontWeight: '600', color: colors.textSecondary, textAlign: 'center' },
+  tabTextActive: { color: colors.text },
+  codeInput: { letterSpacing: 3, fontWeight: '600' },
+  submit: { marginTop: spacing.sm },
+  help: { ...type.footnote, textAlign: 'center', marginTop: spacing.lg },
+  confirmTitle: { ...type.title, marginBottom: spacing.md },
+  confirmBody: { ...type.callout, color: colors.textSecondary, lineHeight: 22 },
+  // Kept well away from the form: employees are the audience here.
+  managerLink: {
+    marginTop: spacing.xl,
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  managerLinkText: {
+    color: colors.white,
+    fontWeight: '600',
+    fontSize: 15,
+    textDecorationLine: 'underline',
+  },
 });

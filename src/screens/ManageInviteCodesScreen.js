@@ -1,136 +1,242 @@
 import React from 'react';
-import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Pressable, ScrollView, Share, StyleSheet, Text, View } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import { alertMessage, confirmAction } from '../components/alerts';
+import { Button, Card, Notice, SectionLabel } from '../components/ui';
+import { formatWhen } from '../services/timeMath';
+import { colors, radius, spacing, type } from '../theme';
 
-// Owner/manager tool: mint an invite code for the active dealership to share
-// with staff. Depends on migration 004's generate_invite_code RPC.
-const ROLES = ['detailer', 'sales', 'manager'];
+// Managers mint invite codes for staff, share them, and revoke unused ones.
+const ROLES = [
+  { key: 'detailer', label: 'Detailer' },
+  { key: 'manager', label: 'Manager' },
+];
 
-export default function ManageInviteCodesScreen({ onBack }) {
+const shareText = (dealershipName, code, expiresAt) =>
+  `Join ${dealershipName} on Shinetime: open the app, tap "I'm new here", and enter code ${code}.` +
+  (expiresAt ? ` The code works until ${new Date(expiresAt).toLocaleDateString()}.` : '');
+
+export default function ManageInviteCodesScreen() {
   const { activeDealership } = useAuth();
-  const [role, setRole] = React.useState('detailer');
-  const [code, setCode] = React.useState('');
-  const [loading, setLoading] = React.useState(false);
-
   const dealershipId = activeDealership?.dealershipId;
+  const dealershipName = activeDealership?.dealership?.name || 'our dealership';
+  const [role, setRole] = React.useState('detailer');
+  const [latest, setLatest] = React.useState(null); // { code, role, expiresAt }
+  const [codes, setCodes] = React.useState([]);
+  const [busy, setBusy] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  const [error, setError] = React.useState('');
 
-  const handleGenerate = async () => {
-    if (!dealershipId) {
-      Alert.alert('No dealership', 'Select a dealership first.');
+  const loadCodes = React.useCallback(async () => {
+    if (!dealershipId) return;
+    const { data, error: loadError } = await supabase
+      .from('dealership_invite_codes')
+      .select('id, code, role, expires_at, used_count, max_uses, created_at')
+      .eq('dealership_id', dealershipId)
+      .eq('is_active', true)
+      .gt('expires_at', new Date().toISOString())
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (loadError) {
+      setError("Couldn't load your open codes.");
       return;
     }
-    setLoading(true);
-    setCode('');
+    setError('');
+    setCodes(data || []);
+  }, [dealershipId]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      loadCodes();
+    }, [loadCodes]),
+  );
+
+  const generate = async () => {
+    setBusy(true);
+    setCopied(false);
     try {
-      const { data, error } = await supabase.rpc('generate_invite_code', {
+      const { data, error: rpcError } = await supabase.rpc('generate_invite_code', {
         p_dealership_id: dealershipId,
         p_role: role,
       });
-      if (error) throw error;
-      setCode(data);
-    } catch (error) {
-      Alert.alert('Could not generate code', error?.message || 'Unknown error');
+      if (rpcError) throw rpcError;
+      setLatest({ code: data, role, expiresAt: Date.now() + 7 * 86400000 });
+      loadCodes();
+    } catch (e) {
+      alertMessage("Couldn't make a code", e?.message || 'Try again.');
     } finally {
-      setLoading(false);
+      setBusy(false);
     }
   };
 
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Invite Team</Text>
-      <Text style={styles.subtitle}>{activeDealership?.dealership?.name || 'This dealership'}</Text>
+  const copy = async (code) => {
+    try {
+      await Clipboard.setStringAsync(code);
+      setCopied(true);
+    } catch {
+      alertMessage('Copy failed', `The code is ${code}.`);
+    }
+  };
 
-      <Text style={styles.label}>Role for this code</Text>
-      <View style={styles.roleRow}>
+  const share = async (code, expiresAt) => {
+    try {
+      await Share.share({ message: shareText(dealershipName, code, expiresAt) });
+    } catch {
+      copy(code);
+    }
+  };
+
+  const revoke = (item) => {
+    confirmAction({
+      title: `Turn off ${item.code}?`,
+      message: 'Nobody new can join with it. People who already joined are not affected.',
+      confirmText: 'Turn off',
+      destructive: true,
+      onConfirm: async () => {
+        const { error: updateError } = await supabase
+          .from('dealership_invite_codes')
+          .update({ is_active: false })
+          .eq('id', item.id);
+        if (updateError) alertMessage("Couldn't turn it off", updateError.message);
+        if (latest?.code === item.code) setLatest(null);
+        loadCodes();
+      },
+    });
+  };
+
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <Text style={styles.intro}>
+        Each person joins with a code, their own name and their own PIN. Codes work for 7 days and
+        can be used by several people.
+      </Text>
+
+      <SectionLabel>New code for a</SectionLabel>
+      <View style={styles.roles} accessibilityRole="radiogroup">
         {ROLES.map((r) => (
-          <TouchableOpacity
-            key={r}
-            style={[styles.roleChip, role === r && styles.roleChipActive]}
-            onPress={() => setRole(r)}
-            disabled={loading}
+          <Pressable
+            key={r.key}
+            onPress={() => setRole(r.key)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected: role === r.key }}
+            style={[styles.role, role === r.key && styles.roleOn]}
           >
-            <Text style={[styles.roleChipText, role === r && styles.roleChipTextActive]}>{r}</Text>
-          </TouchableOpacity>
+            <Text style={[styles.roleText, role === r.key && styles.roleTextOn]}>{r.label}</Text>
+          </Pressable>
         ))}
       </View>
+      {role === 'manager' ? (
+        <Notice tone="warning">Managers can see every job and invite others.</Notice>
+      ) : null}
+      <Button
+        title="Make a code"
+        icon="key-outline"
+        onPress={generate}
+        loading={busy}
+        style={styles.gap}
+      />
 
-      <TouchableOpacity
-        style={[styles.primaryButton, loading && styles.disabled]}
-        onPress={handleGenerate}
-        disabled={loading}
-      >
-        {loading ? (
-          <ActivityIndicator color="#667eea" />
-        ) : (
-          <Text style={styles.primaryButtonText}>Generate Code</Text>
-        )}
-      </TouchableOpacity>
-
-      {!!code && (
-        <View style={styles.codeCard}>
-          <Text style={styles.codeLabel}>Share this code</Text>
-          <Text selectable style={styles.codeValue}>
-            {code}
+      {latest ? (
+        <Card style={styles.codeCard}>
+          <Text
+            style={styles.codeLabel}
+          >{`${latest.role === 'manager' ? 'Manager' : 'Detailer'} code`}</Text>
+          <Text
+            selectable
+            style={styles.code}
+            accessibilityLabel={`Code ${latest.code.split('').join(' ')}`}
+          >
+            {latest.code}
           </Text>
-          <Text style={styles.codeHint}>Expires in 7 days. Staff enter it on the Join screen.</Text>
-        </View>
-      )}
+          <View style={styles.row}>
+            <Button
+              title={copied ? 'Copied' : 'Copy'}
+              icon={copied ? 'checkmark' : 'copy-outline'}
+              variant="secondary"
+              onPress={() => copy(latest.code)}
+              style={styles.flex}
+            />
+            <Button
+              title="Share"
+              icon="share-outline"
+              onPress={() => share(latest.code, latest.expiresAt)}
+              style={styles.flex}
+            />
+          </View>
+        </Card>
+      ) : null}
 
-      {onBack && (
-        <TouchableOpacity style={styles.linkBtn} onPress={onBack}>
-          <Text style={styles.linkText}>Back</Text>
-        </TouchableOpacity>
+      <SectionLabel>{`Open codes · ${codes.length}`}</SectionLabel>
+      {error ? <Notice tone="error">{error}</Notice> : null}
+      {codes.length === 0 ? (
+        <Text style={styles.empty}>No open codes.</Text>
+      ) : (
+        <Card style={styles.list}>
+          {codes.map((item, index) => (
+            <View key={item.id} style={[styles.listRow, index > 0 && styles.divider]}>
+              <View style={styles.flex}>
+                <Text style={styles.listCode}>{item.code}</Text>
+                <Text style={styles.listMeta}>
+                  {`${item.role} · used ${item.used_count}${item.max_uses ? ` of ${item.max_uses}` : ''} · until ${formatWhen(Date.parse(item.expires_at))}`}
+                </Text>
+              </View>
+              <Button
+                title="Share"
+                size="sm"
+                variant="ghost"
+                onPress={() => share(item.code, item.expires_at)}
+              />
+              <Button title="Turn off" size="sm" variant="ghost" onPress={() => revoke(item)} />
+            </View>
+          ))}
+        </Card>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5', padding: 24, justifyContent: 'center' },
-  title: { fontSize: 28, fontWeight: 'bold', color: '#333', textAlign: 'center' },
-  subtitle: { fontSize: 15, color: '#666', textAlign: 'center', marginBottom: 24 },
-  label: { fontSize: 13, color: '#666', marginBottom: 8 },
-  roleRow: { flexDirection: 'row', gap: 8, marginBottom: 20 },
-  roleChip: {
+  container: { flex: 1, backgroundColor: colors.bg },
+  content: { padding: spacing.lg, paddingBottom: spacing.xxl },
+  intro: { ...type.subhead },
+  flex: { flex: 1 },
+  gap: { marginTop: spacing.md },
+  roles: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.sm },
+  role: {
     flex: 1,
-    paddingVertical: 10,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#ccc',
+    minHeight: 48,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  roleChipActive: { backgroundColor: '#667eea', borderColor: '#667eea' },
-  roleChipText: { color: '#555', textTransform: 'capitalize', fontWeight: '600' },
-  roleChipTextActive: { color: '#fff' },
-  primaryButton: {
-    backgroundColor: '#fff',
-    borderWidth: 1,
-    borderColor: '#667eea',
-    borderRadius: 10,
-    padding: 16,
+  roleOn: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  roleText: { fontSize: 16, fontWeight: '600', color: colors.textSecondary },
+  roleTextOn: { color: colors.accent },
+  codeCard: { marginTop: spacing.lg, alignItems: 'center', gap: spacing.sm },
+  codeLabel: { ...type.label },
+  code: {
+    fontSize: 38,
+    fontWeight: '700',
+    letterSpacing: 6,
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
+  },
+  row: { flexDirection: 'row', gap: spacing.sm, alignSelf: 'stretch' },
+  empty: { ...type.subhead, paddingHorizontal: spacing.xs },
+  list: { paddingVertical: spacing.xs },
+  listRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: spacing.xs,
+    paddingVertical: spacing.sm,
   },
-  disabled: { opacity: 0.6 },
-  primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
-  codeCard: {
-    marginTop: 20,
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 20,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-  },
-  codeLabel: { fontSize: 12, color: '#666' },
-  codeValue: {
-    fontSize: 34,
-    fontWeight: 'bold',
-    color: '#333',
-    letterSpacing: 4,
-    marginVertical: 8,
-  },
-  codeHint: { fontSize: 12, color: '#999', textAlign: 'center' },
-  linkBtn: { marginTop: 18, alignItems: 'center' },
-  linkText: { color: '#667eea', fontWeight: '600' },
+  divider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  listCode: { ...type.headline, letterSpacing: 2 },
+  listMeta: { ...type.footnote, textTransform: 'none' },
 });

@@ -1,77 +1,89 @@
-// Render tests for the manager sign-in screen.
-//
-// This is now a secondary route (employees use EmployeeAccessScreen), reached
-// via a link — so what matters is that it still authenticates correctly and that
-// the way back to the employee flow is always available.
+// Render tests for the manager sign-in screen (a secondary route reached from
+// the employee screen).
 
 import React from 'react';
 import { render, screen, act, fireEvent } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const mockSignIn = jest.fn();
+let mockError = '';
 
 jest.mock('../../src/context/AuthContext', () => ({
-  useAuth: () => ({ signIn: mockSignIn, error: '' }),
+  useAuth: () => ({ signIn: mockSignIn, error: mockError }),
 }));
 
 import AuthScreen from '../../src/screens/AuthScreen';
 
+const metrics = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
+const mount = (props = {}) =>
+  render(
+    <SafeAreaProvider initialMetrics={metrics}>
+      <AuthScreen {...props} />
+    </SafeAreaProvider>,
+  );
+
 const fill = async (email, password) => {
   await act(async () => {
-    if (email !== null)
-      fireEvent.changeText(screen.getByPlaceholderText('Dealership email'), email);
-    if (password !== null) fireEvent.changeText(screen.getByPlaceholderText('Password'), password);
+    if (email !== null) fireEvent.changeText(screen.getByTestId('email-input'), email);
+    if (password !== null) fireEvent.changeText(screen.getByTestId('password-input'), password);
   });
 };
 
 const submit = async () => {
   await act(async () => {
-    fireEvent.press(screen.getByText('Continue'));
+    fireEvent.press(screen.getByText('Sign in'));
   });
 };
 
 beforeEach(() => {
   mockSignIn.mockReset();
   mockSignIn.mockResolvedValue({ error: null });
-  jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  mockError = '';
 });
 
 describe('AuthScreen (manager sign-in)', () => {
-  it('asks for dealership email and password', async () => {
-    await render(<AuthScreen />);
-    expect(screen.getByPlaceholderText('Dealership email')).toBeTruthy();
-    expect(screen.getByPlaceholderText('Password')).toBeTruthy();
+  it("is labelled as the manager's own sign-in, not a shared dealership login", async () => {
+    await mount();
+    expect(screen.getByText('Manager sign-in')).toBeTruthy();
+    expect(screen.queryByText(/Dealership Login/i)).toBeNull();
+    expect(screen.getByText('Email')).toBeTruthy();
+    expect(screen.getByText('Password')).toBeTruthy();
   });
 
-  it('will not submit with an empty field', async () => {
-    await render(<AuthScreen />);
-    await submit();
-    expect(mockSignIn).not.toHaveBeenCalled();
-
+  it('will not submit with an empty field and says why', async () => {
+    await mount();
     await fill('manager@example.com', '');
     await submit();
     expect(mockSignIn).not.toHaveBeenCalled();
-    expect(Alert.alert).toHaveBeenCalled();
+    expect(screen.getByText('Enter your email and password.')).toBeTruthy();
   });
 
   it('normalises the email before signing in', async () => {
-    await render(<AuthScreen />);
+    await mount();
     await fill('  Manager@Example.COM  ', 'hunter2');
     await submit();
     expect(mockSignIn).toHaveBeenCalledWith('manager@example.com', 'hunter2');
   });
 
-  it('offers a way back to the employee invite flow', async () => {
-    const onBack = jest.fn();
-    await render(<AuthScreen onBack={onBack} />);
-    await act(async () => {
-      fireEvent.press(screen.getByText(/invite code/i));
-    });
-    expect(onBack).toHaveBeenCalled();
+  it('rewords the auth error for people', async () => {
+    mockError = 'Invalid login credentials';
+    await mount();
+    expect(screen.getByText('That email and password don’t match.')).toBeTruthy();
   });
 
-  it('hides the back link when there is nowhere to go back to', async () => {
-    await render(<AuthScreen />);
-    expect(screen.queryByText(/invite code/i)).toBeNull();
+  it('offers a way back to the employee flow only when there is one', async () => {
+    const onBack = jest.fn();
+    const view = await mount({ onBack });
+    await act(async () => {
+      fireEvent.press(screen.getByText(/Sign in with your code/i));
+    });
+    expect(onBack).toHaveBeenCalled();
+    await view.unmount();
+
+    await mount();
+    expect(screen.queryByText(/Sign in with your code/i)).toBeNull();
   });
 });

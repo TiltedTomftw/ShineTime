@@ -1,29 +1,26 @@
 import React from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
+import { Pressable, StyleSheet, Text } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import AuthLayout from '../components/AuthLayout';
+import { Button, Field } from '../components/ui';
+import { colors, spacing, type } from '../theme';
 
+// Manager sign-in: the manager's own email + password.
 export default function AuthScreen({ onBack }) {
   const { signIn, error } = useAuth();
   const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  const [localError, setLocalError] = React.useState('');
+  const passwordRef = React.useRef(null);
 
   const handleSubmit = async () => {
     const normalizedEmail = email.trim().toLowerCase();
-    if (!normalizedEmail || !password.trim()) {
-      Alert.alert('Missing fields', 'Dealership email and password are required.');
+    if (!normalizedEmail || !password) {
+      setLocalError('Enter your email and password.');
       return;
     }
-
+    setLocalError('');
     setSubmitting(true);
     try {
       await signIn(normalizedEmail, password);
@@ -32,105 +29,66 @@ export default function AuthScreen({ onBack }) {
     }
   };
 
+  const shownError =
+    localError ||
+    (error && /invalid login/i.test(error) ? 'That email and password don’t match.' : error);
+
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <AuthLayout
+      subtitle="Manager sign-in"
+      footer={
+        onBack ? (
+          <Pressable onPress={onBack} accessibilityRole="button" style={styles.link} hitSlop={8}>
+            <Text style={styles.linkText}>Detailer? Sign in with your code</Text>
+          </Pressable>
+        ) : null
+      }
     >
-      <View style={styles.content}>
-        <Text style={styles.title}>Shinetime</Text>
-        <Text style={styles.subtitle}>Dealership Login</Text>
-
-        <TextInput
-          style={styles.input}
-          value={email}
-          onChangeText={setEmail}
-          placeholder="Dealership email"
-          keyboardType="email-address"
-          autoCapitalize="none"
-          autoCorrect={false}
-          editable={!submitting}
-        />
-
-        <TextInput
-          style={styles.input}
-          value={password}
-          onChangeText={setPassword}
-          placeholder="Password"
-          secureTextEntry
-          autoCapitalize="none"
-          editable={!submitting}
-        />
-
-        {!!error && <Text style={styles.error}>{error}</Text>}
-
-        <TouchableOpacity style={styles.primaryButton} onPress={handleSubmit} disabled={submitting}>
-          <Text style={styles.primaryButtonText}>{submitting ? 'Please wait...' : 'Continue'}</Text>
-        </TouchableOpacity>
-
-        {onBack && (
-          <TouchableOpacity style={styles.linkBtn} onPress={onBack} disabled={submitting}>
-            <Text style={styles.linkText}>Have an invite code? Sign in as an employee</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-    </KeyboardAvoidingView>
+      <Field
+        label="Email"
+        value={email}
+        onChangeText={setEmail}
+        placeholder="you@dealership.com"
+        keyboardType="email-address"
+        autoCapitalize="none"
+        autoCorrect={false}
+        autoComplete="email"
+        textContentType="username"
+        editable={!submitting}
+        returnKeyType="next"
+        onSubmitEditing={() => passwordRef.current?.focus()}
+        testID="email-input"
+      />
+      <Field
+        ref={passwordRef}
+        label="Password"
+        value={password}
+        onChangeText={setPassword}
+        placeholder="Password"
+        secureTextEntry
+        autoCapitalize="none"
+        autoComplete="password"
+        textContentType="password"
+        editable={!submitting}
+        returnKeyType="go"
+        onSubmitEditing={handleSubmit}
+        error={shownError}
+        testID="password-input"
+      />
+      <Button title="Sign in" onPress={handleSubmit} loading={submitting} style={styles.submit} />
+      <Text style={styles.help}>Forgot your password? Contact Shinetime support to reset it.</Text>
+    </AuthLayout>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#667eea',
-  },
-  content: {
-    flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: 'bold',
-    color: '#fff',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#e0e7ff',
-    textAlign: 'center',
-    marginBottom: 32,
-  },
-  input: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 10,
-    fontSize: 16,
-    marginBottom: 12,
-  },
-  error: {
-    color: '#ffe4e6',
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  primaryButton: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  primaryButtonText: {
-    color: '#667eea',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-  linkBtn: {
-    marginTop: 22,
-    alignItems: 'center',
-  },
+  submit: { marginTop: spacing.sm },
+  help: { ...type.footnote, textAlign: 'center', marginTop: spacing.lg },
+  link: { minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.lg },
   linkText: {
-    color: '#fff',
+    color: colors.white,
     fontWeight: '600',
+    fontSize: 15,
+    textDecorationLine: 'underline',
   },
 });

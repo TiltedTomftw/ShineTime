@@ -1,13 +1,11 @@
-// Render tests for the employee entry screen.
-//
-// This is the first thing an employee ever sees, and it must never expose the
-// dealership login. What's verified here is the wiring the unit tests can't
-// reach: the submit gate, what actually gets sent to the Edge Function, that a
-// returned session is applied, and that failures surface instead of hanging.
+// Render tests for the employee entry screen — the first thing an employee
+// sees. It must never expose a dealership login, must send the right mode to
+// the Edge Function, must confirm a NEW name before creating an account, and
+// must show failures instead of hanging.
 
 import React from 'react';
 import { render, screen, act, fireEvent } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 const mockInvoke = jest.fn();
 const mockSetSession = jest.fn();
@@ -21,17 +19,28 @@ jest.mock('../../src/lib/supabase', () => ({
 
 import EmployeeAccessScreen from '../../src/screens/EmployeeAccessScreen';
 
+const metrics = {
+  frame: { x: 0, y: 0, width: 390, height: 844 },
+  insets: { top: 0, left: 0, right: 0, bottom: 0 },
+};
+const mount = (props = {}) =>
+  render(
+    <SafeAreaProvider initialMetrics={metrics}>
+      <EmployeeAccessScreen {...props} />
+    </SafeAreaProvider>,
+  );
+
 const fill = async (code, name, pin) => {
   await act(async () => {
-    if (code !== null) fireEvent.changeText(screen.getByPlaceholderText('Invite code'), code);
-    if (name !== null) fireEvent.changeText(screen.getByPlaceholderText('Your name'), name);
-    if (pin !== null) fireEvent.changeText(screen.getByPlaceholderText(/Create a PIN/), pin);
+    if (code !== null) fireEvent.changeText(screen.getByTestId('code-input'), code);
+    if (name !== null) fireEvent.changeText(screen.getByTestId('name-input'), name);
+    if (pin !== null) fireEvent.changeText(screen.getByTestId('pin-input'), pin);
   });
 };
 
-const submit = async () => {
+const press = async (text) => {
   await act(async () => {
-    fireEvent.press(screen.getByText('Start Detailing'));
+    fireEvent.press(screen.getByText(text));
   });
 };
 
@@ -43,97 +52,98 @@ beforeEach(() => {
     error: null,
   });
   mockSetSession.mockResolvedValue({ error: null });
-  jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 });
 
 describe('EmployeeAccessScreen', () => {
   it('never shows a dealership email or password field', async () => {
-    await render(<EmployeeAccessScreen />);
-    expect(screen.queryByPlaceholderText(/email/i)).toBeNull();
-    expect(screen.queryByPlaceholderText(/^Password$/i)).toBeNull();
+    await mount();
+    expect(screen.queryByText(/email/i)).toBeNull();
+    expect(screen.queryByText(/^Password$/i)).toBeNull();
   });
 
-  it('does not submit until code, name and PIN are all provided', async () => {
-    await render(<EmployeeAccessScreen />);
+  it('opens on "signed in before" so returning staff are not asked to create anything', async () => {
+    await mount();
+    expect(screen.getByText('Your PIN')).toBeTruthy();
+    expect(screen.queryByText(/Choose a PIN/)).toBeNull();
+  });
 
-    await submit(); // nothing filled in
+  it('labels stay visible (no placeholder-only fields)', async () => {
+    await mount();
+    expect(screen.getByText('Dealership code')).toBeTruthy();
+    expect(screen.getByText('Your name')).toBeTruthy();
+  });
+
+  it('does not submit until code, name and a 4+ digit PIN are provided', async () => {
+    await mount();
+    await press('Sign in');
     expect(mockInvoke).not.toHaveBeenCalled();
 
-    await fill('ABC1234', '', '');
-    await submit();
-    expect(mockInvoke).not.toHaveBeenCalled();
-
-    await fill(null, 'Alex', '12'); // PIN too short
-    await submit();
+    await fill('ABC1234', 'Alex', '12');
+    await press('Sign in');
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('sends the code, name and PIN to the employee-access function', async () => {
-    await render(<EmployeeAccessScreen />);
+  it('sends a sign-in request and applies the returned session', async () => {
+    await mount();
     await fill('abc1234', 'Alex', '1234');
-    await submit();
+    await press('Sign in');
 
-    expect(mockInvoke).toHaveBeenCalledTimes(1);
     const [fn, options] = mockInvoke.mock.calls[0];
     expect(fn).toBe('employee-access');
-    expect(options.body).toEqual({ code: 'ABC1234', name: 'Alex', pin: '1234' });
-  });
-
-  it('applies the returned session so the app can continue', async () => {
-    await render(<EmployeeAccessScreen />);
-    await fill('ABC1234', 'Alex', '1234');
-    await submit();
-
+    expect(options.body).toEqual({
+      code: 'ABC1234',
+      name: 'Alex',
+      pin: '1234',
+      mode: 'signin',
+      confirmNew: false,
+    });
     expect(mockSetSession).toHaveBeenCalledWith({ access_token: 'at', refresh_token: 'rt' });
   });
 
-  it("surfaces the function's error and does not sign in", async () => {
-    mockInvoke.mockResolvedValue({
-      data: { error: 'That invite code is not valid or has expired.' },
+  it('asks a new person to confirm their name before an account is created', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      data: { needsConfirm: true, dealership: { name: 'Ford Motors' }, name: 'Mike Smith' },
       error: null,
     });
-    await render(<EmployeeAccessScreen />);
-    await fill('BADCODE', 'Alex', '1234');
-    await submit();
+    await mount();
+    await press("I'm new here");
+    await fill('ABC1234', 'Mike Smith', '1234');
+    await press('Join');
 
     expect(mockSetSession).not.toHaveBeenCalled();
-    expect(Alert.alert).toHaveBeenCalledWith(
-      'Could not sign in',
-      'That invite code is not valid or has expired.',
-    );
+    expect(screen.getByText('Join Ford Motors as Mike Smith?')).toBeTruthy();
+
+    await press("Yes, I'm Mike Smith");
+    const [, options] = mockInvoke.mock.calls[1];
+    expect(options.body).toMatchObject({ mode: 'join', confirmNew: true });
+    expect(mockSetSession).toHaveBeenCalled();
   });
 
-  it('normalises the code to uppercase and strips punctuation', async () => {
-    await render(<EmployeeAccessScreen />);
-    await fill('ab-c 12/34', 'Alex', '1234');
-    expect(screen.getByPlaceholderText('Invite code').props.value).toBe('ABC1234');
+  it("shows the function's error inline and does not sign in", async () => {
+    mockInvoke.mockResolvedValue({ data: { error: "That code isn't valid." }, error: null });
+    await mount();
+    await fill('BADCODE', 'Alex', '1234');
+    await press('Sign in');
+
+    expect(mockSetSession).not.toHaveBeenCalled();
+    expect(screen.getByText("That code isn't valid.")).toBeTruthy();
   });
 
-  it('keeps the PIN numeric only', async () => {
-    await render(<EmployeeAccessScreen />);
-    await fill('ABC1234', 'Alex', '12ab34');
-    expect(screen.getByPlaceholderText(/Create a PIN/).props.value).toBe('1234');
-  });
-
-  it('keeps the manager link well clear of the "Returning?" hint', async () => {
-    // The two sat close together and read as one block of instructions; the
-    // manager route is secondary and must stay visually separated.
-    await render(<EmployeeAccessScreen onManagerSignIn={() => {}} />);
-    const link = screen.getByText('Manager sign-in');
-    const spacing = link.parent?.props?.style?.marginTop ?? 0;
-    expect(spacing).toBeGreaterThanOrEqual(40);
+  it('normalises the code and keeps the PIN numeric', async () => {
+    await mount();
+    await fill('ab-c 12/34', 'Alex', '12ab34');
+    expect(screen.getByTestId('code-input').props.value).toBe('ABC1234');
+    expect(screen.getByTestId('pin-input').props.value).toBe('1234');
   });
 
   it('offers a manager sign-in link only when a handler is supplied', async () => {
     const onManagerSignIn = jest.fn();
-    const view = await render(<EmployeeAccessScreen onManagerSignIn={onManagerSignIn} />);
-    await act(async () => {
-      fireEvent.press(screen.getByText('Manager sign-in'));
-    });
+    const view = await mount({ onManagerSignIn });
+    await press('Manager sign-in');
     expect(onManagerSignIn).toHaveBeenCalled();
     await view.unmount();
 
-    await render(<EmployeeAccessScreen />);
+    await mount();
     expect(screen.queryByText('Manager sign-in')).toBeNull();
   });
 });

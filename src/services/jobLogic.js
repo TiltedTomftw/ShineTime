@@ -1,13 +1,19 @@
-// Pure, dependency-free job helpers extracted from storage.js so the sync-critical
-// logic (input sanitizing, Supabase row mapping, offline merge, timestamp parsing)
-// can be unit-tested without loading React Native / Supabase. storage.js imports
-// these; behavior is unchanged. CommonJS so Node's built-in test runner can
-// require() it directly (same pattern as timeMath.js).
+// Pure, dependency-free job logic. CommonJS so Node's built-in test runner can
+// require() it directly without loading React Native / Supabase.
+//
+// Supabase is the single source of truth for jobs. The phone never keeps its
+// own copy of the job list; it only holds a short-lived outbox of *actions*
+// ("paused #P4521 at 10:42") that haven't been confirmed yet. Every action is
+// applied to the job by `applyJobAction` — on the phone (for an instant UI)
+// and again against the latest server copy when the outbox sends it — so both
+// sides always agree on how a job's state and times change.
+
+const { computePauseDuration, computeActiveTime, accumulateDetailerTime } = require('./timeMath');
 
 // Trim and length-cap free text. We deliberately do NOT strip HTML: React
 // Native <Text> never interprets markup, React escapes on web, and the manager
-// dashboard escapes via textContent — so there is no XSS vector here. Tag
-// stripping only corrupted legitimate input (e.g. a note like "scratch < 2in").
+// dashboard escapes on render — so tag stripping would only corrupt legitimate
+// input (e.g. a note like "scratch < 2in").
 const sanitizeInput = (input, maxLength = 200) => {
   if (typeof input !== 'string') return input;
   return input.trim().slice(0, maxLength);
@@ -20,6 +26,12 @@ const parseTimestamp = (value) => {
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
 };
+
+// Statuses a detailer can still act on. `needs_rework` is a manager sending a
+// finished car back; it counts as open everywhere (lists, counts, the
+// one-active-job-per-stock rule in the database).
+const OPEN_STATUSES = ['in_progress', 'paused', 'needs_rework'];
+const isOpenStatus = (status) => OPEN_STATUSES.includes(status);
 
 const mapSupabaseJobToLegacyShape = (row) => {
   const payload = row && typeof row.payload === 'object' && row.payload !== null ? row.payload : {};
@@ -35,6 +47,7 @@ const mapSupabaseJobToLegacyShape = (row) => {
 
   return {
     ...payload,
+    remoteId: row.id || null,
     jobId: payload.jobId || row.legacy_job_id || row.id,
     status: payload.status || row.status || 'queued',
     deviceId: payload.deviceId || row.device_id || null,
@@ -53,6 +66,7 @@ const mapSupabaseJobToLegacyShape = (row) => {
     totalActiveTime: Number(payload.totalActiveTime || row.total_active_ms || 0),
     pauseEvents: ensureArray(payload.pauseEvents),
     notes: ensureArray(payload.notes),
+    photos: ensureArray(payload.photos),
     custodyEvents: ensureArray(payload.custodyEvents),
     detailers: ensureArray(payload.detailers),
     createdByUserId: payload.createdByUserId || row.created_by_user_id || null,
@@ -64,129 +78,352 @@ const mapSupabaseJobToLegacyShape = (row) => {
   };
 };
 
-// Offline-safe reconcile of the local cache against the server.
-//
-// Merge rule: keep the local copy when its updatedAt is newer than the server's
-// (so unsynced local edits are never clobbered), else take the remote copy.
-//
-// Delete rule (fixes "zombie jobs"): a local job that is absent from the server
-// is ambiguous — it's either an offline creation that hasn't pushed yet, or a
-// job that WAS on the server and has since been deleted. We disambiguate with
-// `syncedAt`, stamped once a job is confirmed present on the server:
-//   - absent + never synced   -> keep (pending local creation)
-//   - absent + previously synced -> DELETED remotely, drop it locally
-//
-// `liveJobIds` must be the FULL set of live job ids on the server, while
-// `remoteJobs` may be a narrower, role-scoped slice. Without that distinction a
-// job belonging to another detailer on a shared device (absent from the scoped
-// slice but alive on the server) would be mistaken for a deletion.
-//
-// Returns { jobs, deletedJobIds }; jobs are sorted newest-created first.
-const reconcileJobsWithRemote = (localJobs, remoteJobs, liveJobIds, now = Date.now()) => {
-  const remoteById = new Map(ensureArray(remoteJobs).map((job) => [job.jobId, job]));
-  const liveIds = new Set(ensureArray(liveJobIds));
-  const deletedJobIds = [];
-  const result = new Map();
-
-  // Anything the server returned is by definition synced.
-  for (const [id, job] of remoteById) {
-    result.set(id, { ...job, syncedAt: job.syncedAt || now });
+// When the current pause (or rework hold) began. A manager's "reopen for
+// rework" records a pause starting at the original completion time, so the gap
+// between finishing and starting rework never counts as work. Jobs reopened by
+// older dashboards lack that event, so fall back to the completion custody
+// event.
+const currentHoldStart = (job) => {
+  const events = ensureArray(job.pauseEvents);
+  const last = events[events.length - 1];
+  if (last && last.type === 'pause') return Number(last.timestamp) || null;
+  if (job.status === 'needs_rework') {
+    const completes = ensureArray(job.custodyEvents).filter((e) => e.type === 'complete');
+    const lastComplete = completes[completes.length - 1];
+    if (lastComplete) return Number(lastComplete.timestamp) || null;
   }
-
-  for (const localJob of ensureArray(localJobs)) {
-    const id = localJob.jobId;
-    const remoteJob = remoteById.get(id);
-
-    if (remoteJob) {
-      const localUpdated = Number(localJob.updatedAt || 0);
-      const remoteUpdated = Number(remoteJob.updatedAt || 0);
-      if (localUpdated > remoteUpdated) {
-        result.set(id, { ...localJob, syncedAt: localJob.syncedAt || now });
-      }
-      continue;
-    }
-
-    if (liveIds.has(id)) {
-      // Alive on the server, just outside this scoped view — keep untouched.
-      result.set(id, { ...localJob, syncedAt: localJob.syncedAt || now });
-      continue;
-    }
-
-    if (localJob.syncedAt) {
-      deletedJobIds.push(id); // was on the server, now gone => deleted
-      continue;
-    }
-
-    result.set(id, localJob); // never synced => offline creation, keep
-  }
-
-  const jobs = Array.from(result.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
-  return { jobs, deletedJobIds };
+  return null;
 };
 
-const isRemoteNewer = (remoteClientUpdatedAt, localUpdatedAtMs) => {
-  if (!remoteClientUpdatedAt) return false;
-  const remoteMs = new Date(remoteClientUpdatedAt).getTime();
-  if (!Number.isFinite(remoteMs)) return false;
-  const localMs = Number(localUpdatedAtMs || 0);
-  return remoteMs > localMs;
-};
-
-// Active elapsed time for a running/paused job (ms), clamped against clock skew.
-// Subtracts accumulated pause time plus, when currently paused, the in-progress
-// pause span. Single source of truth for the live timer across all screens
-// (previously copy-pasted as getElapsedTime in three places). `now` is injectable
-// so it stays pure and unit-testable.
+// Active elapsed time for an open job (ms), clamped against clock skew.
 const computeLiveElapsed = (job, now = Date.now()) => {
   if (!job) return 0;
-  const events = ensureArray(job.pauseEvents);
-  const lastPause = events[events.length - 1];
-  const currentPause =
-    job.status === 'paused' && lastPause && lastPause.type === 'pause'
-      ? Math.max(0, now - Number(lastPause.timestamp || 0))
-      : 0;
+  const onHold = job.status === 'paused' || job.status === 'needs_rework';
+  const holdStart = onHold ? currentHoldStart(job) : null;
+  const currentPause = holdStart ? Math.max(0, now - holdStart) : 0;
   const elapsed = now - Number(job.startTime || 0) - Number(job.totalPauseTime || 0) - currentPause;
   return elapsed > 0 ? elapsed : 0;
 };
 
-// Whether a job belongs to the given operator. Prefers a stable operational-user
-// id match; falls back to detailer-name equality only for legacy jobs created
-// before ids were stamped. Fixes the "two detailers named Mike collide" bug for
-// all new jobs.
-const jobBelongsToOperator = (job, operatorId, operatorName) => {
-  if (!job) return false;
-  if (operatorId && job.operationalUserId) {
-    return job.operationalUserId === operatorId;
+// The time a job's card should show: final time once completed, live otherwise.
+const displayDuration = (job, now = Date.now()) =>
+  job && job.status === 'completed'
+    ? Number(job.totalActiveTime || 0)
+    : computeLiveElapsed(job, now);
+
+// --- Actions --------------------------------------------------------------
+
+class JobActionError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = 'JobActionError';
+    this.code = code;
+    // The outbox drops permanent failures (after telling the detailer) rather
+    // than retrying something that can never succeed.
+    this.permanent = true;
   }
-  return (job.detailerName || '') === (operatorName || '');
+}
+
+const MAX_APPLIED_IDS = 200;
+const PAUSE_REASONS = ['Waiting on parts', 'Lunch / break', 'Moved to another car', 'End of shift'];
+
+const clone = (job) => JSON.parse(JSON.stringify(job));
+
+const custody = (job, type, at, actorName, note) => {
+  job.custodyEvents = ensureArray(job.custodyEvents).concat({
+    type,
+    timestamp: at,
+    detailerName: actorName || 'Unknown',
+    note: note || '',
+  });
 };
 
-// Turn raw sync state into something worth showing a detailer. Sync problems
-// were previously console.log-only — invisible on a phone — so a detailer could
-// finish a car with nothing actually saved to the server. Returns null when
-// there is nothing worth interrupting them about.
-const describeSyncStatus = ({ pendingCount = 0, lastError = null } = {}) => {
-  const pending = Math.max(0, Number(pendingCount) || 0);
-  if (pending > 0) {
+const bankDetailerTime = (job, at) => {
+  const key = job.detailerName || 'Unknown';
+  job.detailerTimeTracking =
+    job.detailerTimeTracking && typeof job.detailerTimeTracking === 'object'
+      ? job.detailerTimeTracking
+      : {};
+  job.detailerTimeTracking[key] = accumulateDetailerTime(
+    job.detailerTimeTracking[key] || 0,
+    job.currentDetailerStartTime || job.startTime,
+    at,
+  );
+};
+
+const describeVehicle = (job) => (job && job.stockNumber ? `#${job.stockNumber}` : 'This car');
+
+// Apply one action to a job and return the NEW job (the input is never
+// mutated). `job` is null only for 'create'. Actions are idempotent: each
+// carries an id, and an action already applied to this job is a no-op, so a
+// retry after a send that actually landed can't double-pause or double-note.
+//
+// action: { id, type, jobId, at, actor: { id, name }, data }
+const applyJobAction = (job, action) => {
+  if (!action || !action.type) throw new JobActionError('invalid', 'Unknown action.');
+  const at =
+    Number.isFinite(Number(action.at)) && action.at !== null ? Number(action.at) : Date.now();
+  const actorName = (action.actor && action.actor.name) || 'Unknown';
+  const data = action.data || {};
+
+  if (action.type === 'create') {
+    if (job) return job; // already on the server: a retried create is a no-op
+    const vehicle = {
+      stockNumber: sanitizeInput(data.stockNumber || '', 50).toUpperCase(),
+      year: sanitizeInput(data.year || '', 4),
+      make: sanitizeInput(data.make || '', 50),
+      model: sanitizeInput(data.model || '', 50),
+      color: sanitizeInput(data.color || '', 30),
+      vin: sanitizeInput(data.vin || '', 17).toUpperCase(),
+    };
+    const created = {
+      jobId: action.jobId,
+      deviceId: data.deviceId || null,
+      detailerName: actorName,
+      operationalUserId: (action.actor && action.actor.id) || null,
+      assignedDetailerId: (action.actor && action.actor.id) || null,
+      createdByUserId: (action.actor && action.actor.id) || null,
+      detailers: [actorName],
+      startTime: at,
+      currentDetailerStartTime: at,
+      endTime: null,
+      totalPauseTime: 0,
+      totalActiveTime: 0,
+      status: 'in_progress',
+      pauseEvents: [],
+      notes: [],
+      photos: [],
+      latestNote: '',
+      custodyEvents: [],
+      detailerTimeTracking: {},
+      appliedActionIds: [action.id].filter(Boolean),
+      createdAt: at,
+      updatedAt: at,
+      ...vehicle,
+    };
+    custody(created, 'start', at, actorName, '');
+    return created;
+  }
+
+  if (!job) throw new JobActionError('not_found', 'That job no longer exists.');
+  if (action.id && ensureArray(job.appliedActionIds).includes(action.id)) return job;
+
+  const next = clone(job);
+  next.pauseEvents = ensureArray(next.pauseEvents);
+  next.notes = ensureArray(next.notes);
+  next.photos = ensureArray(next.photos);
+
+  switch (action.type) {
+    case 'pause': {
+      if (next.status !== 'in_progress') {
+        throw new JobActionError(
+          'invalid_state',
+          `${describeVehicle(job)} isn't running, so it can't be paused.`,
+        );
+      }
+      const reason = sanitizeInput(data.reason || '', 60);
+      const note = sanitizeInput(data.note || '', 500);
+      bankDetailerTime(next, at);
+      next.pauseEvents.push({ type: 'pause', timestamp: at, detailerName: actorName, reason });
+      next.status = 'paused';
+      const text = [reason, note].filter(Boolean).join(' — ');
+      if (text) {
+        next.notes.unshift({ timestamp: at, detailerName: actorName, text: `Paused: ${text}` });
+        next.latestNote = text;
+      }
+      custody(next, 'pause', at, actorName, text);
+      break;
+    }
+    case 'resume': {
+      if (next.status !== 'paused' && next.status !== 'needs_rework') {
+        throw new JobActionError('invalid_state', `${describeVehicle(job)} isn't paused.`);
+      }
+      const wasRework = next.status === 'needs_rework';
+      const holdStart = currentHoldStart(next);
+      if (holdStart) {
+        next.totalPauseTime =
+          Number(next.totalPauseTime || 0) + computePauseDuration(holdStart, at);
+      }
+      next.pauseEvents.push({ type: 'resume', timestamp: at, detailerName: actorName });
+      next.status = 'in_progress';
+      next.endTime = null;
+      next.currentDetailerStartTime = at;
+      custody(next, wasRework ? 'rework_start' : 'resume', at, actorName, '');
+      break;
+    }
+    case 'complete': {
+      if (next.status !== 'in_progress' && next.status !== 'paused') {
+        throw new JobActionError(
+          'invalid_state',
+          next.status === 'completed'
+            ? `${describeVehicle(job)} is already complete.`
+            : `Start the rework on ${describeVehicle(job)} before completing it.`,
+        );
+      }
+      if (next.status === 'paused') {
+        const holdStart = currentHoldStart(next);
+        if (holdStart) {
+          next.totalPauseTime =
+            Number(next.totalPauseTime || 0) + computePauseDuration(holdStart, at);
+        }
+      } else {
+        bankDetailerTime(next, at);
+      }
+      next.endTime = at;
+      next.totalActiveTime = computeActiveTime(next.startTime, at, next.totalPauseTime);
+      next.status = 'completed';
+      custody(next, 'complete', at, actorName, '');
+      break;
+    }
+    case 'note': {
+      if (next.status === 'completed') {
+        throw new JobActionError(
+          'invalid_state',
+          `${describeVehicle(job)} is complete, so notes are locked.`,
+        );
+      }
+      const text = sanitizeInput(data.text || '', 500);
+      if (!text) throw new JobActionError('invalid', 'A note needs some text.');
+      next.notes.unshift({ timestamp: at, detailerName: actorName, text });
+      next.latestNote = text;
+      break;
+    }
+    case 'photo': {
+      // Photos are recorded even after completion: a picture taken just before
+      // finishing may only upload later, and losing it would be worse.
+      if (!data.storagePath) throw new JobActionError('invalid', 'Photo is missing its file.');
+      if (!next.photos.some((p) => p.storagePath === data.storagePath)) {
+        next.photos.unshift({
+          storagePath: data.storagePath,
+          timestamp: at,
+          detailerName: actorName,
+        });
+      }
+      break;
+    }
+    default:
+      throw new JobActionError('invalid', `Unknown action "${action.type}".`);
+  }
+
+  next.updatedAt = Math.max(Number(next.updatedAt || 0), at);
+  next.appliedActionIds = ensureArray(next.appliedActionIds)
+    .concat(action.id ? [action.id] : [])
+    .slice(-MAX_APPLIED_IDS);
+  return next;
+};
+
+// Apply a list of actions in order, skipping (not throwing on) any that don't
+// fit. Used to show a job "as it will be" with unsent outbox actions on top.
+const applyPendingActions = (job, actions) => {
+  let current = job;
+  for (const action of ensureArray(actions)) {
+    try {
+      current = applyJobAction(current, action);
+    } catch {
+      // An action that no longer applies is reported when the outbox sends it.
+    }
+  }
+  return current;
+};
+
+// The database row for a job. Structured columns mirror the payload so the
+// dashboard and SQL reports can filter without parsing JSON.
+const toJobRow = (job, dealershipId) => ({
+  dealership_id: dealershipId,
+  legacy_job_id: job.jobId,
+  status: job.status,
+  created_by_user_id: job.createdByUserId || null,
+  assigned_detailer_id: job.assignedDetailerId || null,
+  device_id: job.deviceId || null,
+  stock_number: job.stockNumber || null,
+  vin: job.vin || null,
+  make: job.make || null,
+  model: job.model || null,
+  year: job.year || null,
+  color: job.color || null,
+  started_at: job.startTime ? new Date(job.startTime).toISOString() : null,
+  ended_at: job.endTime ? new Date(job.endTime).toISOString() : null,
+  total_pause_ms: Math.round(Number(job.totalPauseTime || 0)),
+  total_active_ms: Math.round(Number(job.totalActiveTime || 0)),
+  client_updated_at: new Date(Number(job.updatedAt) || Date.now()).toISOString(),
+  payload: job,
+});
+
+// --- Outbox status for the banner -----------------------------------------
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// Turn outbox state into something worth showing a detailer, or null.
+const describeOutbox = ({ pending = 0, failures = [], online = true } = {}) => {
+  const count = Math.max(0, Number(pending) || 0);
+  const failed = ensureArray(failures);
+  if (failed.length > 0) {
     return {
-      tone: 'warning',
-      message: `${pending} change${pending === 1 ? '' : 's'} not saved to the server yet — retrying automatically.`,
+      tone: 'error',
+      message: `Couldn't save: ${failed[0].message}`,
+      action: 'Dismiss',
     };
   }
-  if (lastError) {
-    return { tone: 'error', message: `Sync problem: ${lastError}` };
+  if (count === 0) return null;
+  if (!online) {
+    return {
+      tone: 'warning',
+      message: `Offline. ${plural(count, 'change')} saved on this phone will send when you're back online.`,
+      action: null,
+    };
   }
-  return null;
+  return { tone: 'info', message: `Sending ${plural(count, 'change')}…`, action: 'Retry now' };
+};
+
+// Which errors are worth retrying. Network trouble, timeouts, auth refreshes
+// and server hiccups resolve on their own; everything else (constraint
+// violations, permission denials, invalid state) never will.
+const isTransientError = (error) => {
+  if (!error) return false;
+  if (error.permanent === true) return false;
+  if (error.permanent === false) return true;
+  const status = Number(error.status || (error.context && error.context.status) || 0);
+  if (status === 401 || status === 408 || status === 429 || status >= 500) return true;
+  const message = String(error.message || '').toLowerCase();
+  if (/network|fetch|timeout|timed out|aborted|offline|jwt|socket|connection/.test(message)) {
+    return true;
+  }
+  // PostgREST / Postgres errors carry a code: those are definitive answers.
+  if (error.code) return false;
+  return true;
+};
+
+// Plain-language version of a database error for a detailer.
+const friendlyErrorMessage = (error, job) => {
+  if (!error) return 'Something went wrong.';
+  if (error.name === 'JobActionError') return error.message;
+  if (error.code === '23505') {
+    return `${describeVehicle(job)} is already open on another job. Open that job instead.`;
+  }
+  if (error.code === '42501' || /row-level security|permission/i.test(error.message || '')) {
+    return "You don't have permission to change this job.";
+  }
+  if (/completed and can only be modified/i.test(error.message || '')) {
+    return `${describeVehicle(job)} is complete. Ask a manager to reopen it.`;
+  }
+  return error.message || 'Something went wrong.';
 };
 
 module.exports = {
   sanitizeInput,
   ensureArray,
   parseTimestamp,
+  OPEN_STATUSES,
+  isOpenStatus,
+  PAUSE_REASONS,
   mapSupabaseJobToLegacyShape,
-  reconcileJobsWithRemote,
-  isRemoteNewer,
   computeLiveElapsed,
-  jobBelongsToOperator,
-  describeSyncStatus,
+  displayDuration,
+  JobActionError,
+  applyJobAction,
+  applyPendingActions,
+  toJobRow,
+  describeOutbox,
+  isTransientError,
+  friendlyErrorMessage,
 };
