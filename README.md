@@ -6,8 +6,8 @@ Mobile app for tracking vehicle detailing productivity at car dealerships.
 
 **Cloud-backed via Supabase. No local server to run.**
 
-- **Mobile App**: React Native + Expo. Talks directly to Supabase; caches jobs
-  locally (AsyncStorage) and syncs in the background.
+- **Mobile App**: React Native + Expo. Supabase is the source of truth; the phone only
+  holds unsent actions (an outbox) until Supabase confirms them.
 - **Backend**: Supabase — Postgres (with Row-Level Security for per-dealership
   tenant isolation), Auth (email/password), Storage (private `job-photos`
   bucket), and Edge Functions.
@@ -25,12 +25,12 @@ app is self-contained and points at a Supabase project via `.env`.
 Shinetime/
 ├── App.js                     # Entry + auth-gated navigation
 ├── src/
-│   ├── screens/               # Home, NewJob, InProgress, History, JobDetail,
-│   │                          # Auth, DealershipSelect, RoleSelection, UserPin,
-│   │                          # CreateDealership, JoinByCode, ManageInviteCodes
+│   ├── screens/               # Home, NewJob, JobDetail, History, Account,
+│   │                          # EmployeeAccess, Auth (manager), DealershipSelect,
+│   │                          # JoinByCode, ManageInviteCodes, Gate screens
 │   ├── navigation/            # React Navigation stack
 │   ├── context/AuthContext.js # Session, memberships, active dealership/role
-│   ├── services/              # storage.js (jobs/sync), ocr.js, timeMath.js
+│   ├── services/              # jobs.js, outbox*.js, jobSync.js, jobLogic.js, ocr.js, timeMath.js
 │   └── lib/supabase.js        # Supabase client
 ├── supabase/
 │   ├── migrations/            # SQL schema (001 foundation … 004 onboarding)

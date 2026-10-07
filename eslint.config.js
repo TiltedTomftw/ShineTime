@@ -28,6 +28,8 @@ module.exports = [
       sourceType: 'module',
       globals: { ...globals.jest, ...globals.node },
     },
+    // jest.mock() must precede the import it mocks (jest hoists it anyway).
+    rules: { 'import/first': 'off' },
   },
 
   // eslint-config-expo 57 ships the React Compiler rule set as errors. This app
@@ -50,6 +52,7 @@ module.exports = [
       'scripts/**/*.js',
       'src/services/timeMath.js',
       'src/services/jobLogic.js',
+      'src/services/outboxCore.js',
       'eslint.config.js',
       'prettier.config.js',
     ],
