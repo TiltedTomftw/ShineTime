@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Card, StatusPill, Button } from './ui';
 import { vehicleTitle, vehicleDescription } from './VehicleSummary';
@@ -36,59 +36,64 @@ export default function JobCard({ job, now, onPress, onResume, showDetailer = fa
   const label = `${vehicleTitle(job)}, ${desc ? `${desc}, ` : ''}${meta.label}`;
 
   return (
-    <Card
-      onPress={onPress}
-      accessibilityLabel={label}
-      style={[styles.card, job.status === 'needs_rework' && styles.reworkCard]}
-    >
-      <View style={styles.top}>
-        <Text style={styles.stock} numberOfLines={1}>
-          {vehicleTitle(job)}
-        </Text>
-        <StatusPill status={job.status} size="sm" />
-      </View>
-      {!!desc && (
-        <Text style={styles.desc} numberOfLines={1}>
-          {desc}
-        </Text>
-      )}
-      {showDetailer && (
-        <Text style={styles.meta} numberOfLines={1}>
-          {job.detailerName || 'Unknown'}
-        </Text>
-      )}
-      {reason ? (
-        <Text style={styles.meta} numberOfLines={2}>
-          {reason}
-        </Text>
-      ) : null}
-
-      <View style={styles.bottom}>
-        {open ? (
-          <Text
-            style={[
-              styles.timer,
-              { color: job.status === 'in_progress' ? colors.run : colors.textSecondary },
-            ]}
-            accessibilityLabel={`Time worked ${formatDuration(elapsed)}`}
-          >
-            {formatClock(elapsed)}
+    // The card's tappable area and the Resume button are siblings: a button
+    // nested inside another button is invalid and hides it from screen readers.
+    <Card style={[styles.card, job.status === 'needs_rework' && styles.reworkCard]}>
+      <Pressable
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        style={({ pressed }) => [styles.main, pressed && styles.pressed]}
+      >
+        <View style={styles.top}>
+          <Text style={styles.stock} numberOfLines={1}>
+            {vehicleTitle(job)}
           </Text>
-        ) : (
-          <Text style={styles.metaStrong}>
-            {formatDuration(job.totalActiveTime)}
-            {job.endTime ? (
-              <Text style={styles.meta}>{`  ·  finished ${formatWhen(job.endTime, now)}`}</Text>
-            ) : null}
+          <StatusPill status={job.status} size="sm" />
+        </View>
+        {!!desc && (
+          <Text style={styles.desc} numberOfLines={1}>
+            {desc}
           </Text>
         )}
-        {job.pendingCount > 0 ? (
-          <View style={styles.pending} accessibilityLabel="Waiting to send">
-            <Ionicons name="cloud-upload-outline" size={16} color={colors.pause} />
-            <Text style={styles.pendingText}>Waiting to send</Text>
-          </View>
+        {showDetailer && (
+          <Text style={styles.meta} numberOfLines={1}>
+            {job.detailerName || 'Unknown'}
+          </Text>
+        )}
+        {reason ? (
+          <Text style={styles.meta} numberOfLines={2}>
+            {reason}
+          </Text>
         ) : null}
-      </View>
+
+        <View style={styles.bottom}>
+          {open ? (
+            <Text
+              style={[
+                styles.timer,
+                { color: job.status === 'in_progress' ? colors.run : colors.textSecondary },
+              ]}
+              accessibilityLabel={`Time worked ${formatDuration(elapsed)}`}
+            >
+              {formatClock(elapsed)}
+            </Text>
+          ) : (
+            <Text style={styles.metaStrong}>
+              {formatDuration(job.totalActiveTime)}
+              {job.endTime ? (
+                <Text style={styles.meta}>{`  ·  finished ${formatWhen(job.endTime, now)}`}</Text>
+              ) : null}
+            </Text>
+          )}
+          {job.pendingCount > 0 ? (
+            <View style={styles.pending} accessibilityLabel="Waiting to send">
+              <Ionicons name="cloud-upload-outline" size={16} color={colors.pause} />
+              <Text style={styles.pendingText}>Waiting to send</Text>
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
 
       {onResume && (job.status === 'paused' || job.status === 'needs_rework') ? (
         <Button
@@ -105,7 +110,9 @@ export default function JobCard({ job, now, onPress, onResume, showDetailer = fa
 }
 
 const styles = StyleSheet.create({
-  card: { marginBottom: spacing.sm, gap: 4 },
+  card: { marginBottom: spacing.sm },
+  main: { gap: 4 },
+  pressed: { opacity: 0.7 },
   reworkCard: { borderLeftWidth: 4, borderLeftColor: colors.rework },
   top: {
     flexDirection: 'row',
