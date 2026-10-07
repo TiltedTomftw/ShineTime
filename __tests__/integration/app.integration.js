@@ -15,9 +15,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const {
-  reconcileJobsWithRemote,
-  jobBelongsToOperator,
-  describeSyncStatus,
+  applyJobAction,
+  mapSupabaseJobToLegacyShape,
+  toJobRow,
 } = require('../../src/services/jobLogic');
 const { computeActiveTime } = require('../../src/services/timeMath');
 
@@ -161,7 +161,12 @@ test.before(async () => {
   world.alpha.managerEmail = `${RUN}-a-mgr@shinetime.test`;
   world.beta.detailerEmail = `${RUN}-b-det@shinetime.test`;
 
-  await createUser(world.alpha.detailerEmail, 'Passw0rd!23', 'detailer', world.alpha.id);
+  world.alpha.detailerId = await createUser(
+    world.alpha.detailerEmail,
+    'Passw0rd!23',
+    'detailer',
+    world.alpha.id,
+  );
   await createUser(world.alpha.managerEmail, 'Passw0rd!23', 'owner', world.alpha.id);
   await createUser(world.beta.detailerEmail, 'Passw0rd!23', 'detailer', world.beta.id);
 
@@ -311,60 +316,91 @@ test('integrity: a second ACTIVE job on the same stock number is rejected', asyn
 });
 
 // =========================================================================
-// C. Sync engine — offline reconcile semantics
+// C. Sync — actions applied to the server copy (Supabase is the source of truth)
 // =========================================================================
 
-test('sync: a server-deleted job is dropped locally (zombie fix)', async () => {
-  const { id, jobId, payload } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-ZOMB` });
-  const local = [{ ...payload, syncedAt: Date.now() - 1000 }];
-  await svc(`jobs?id=eq.${id}`, { method: 'DELETE' });
-
-  const { body } = await svc(
-    `jobs?dealership_id=eq.${world.alpha.id}&deleted_at=is.null&select=legacy_job_id`,
+// What the app's outbox does for one action: read the row, apply the action
+// with the shared reducer, and save only if nobody changed the row meanwhile.
+const sendAction = async (token, rowId, action) => {
+  const { body } = await asUser(
+    token,
+    `jobs?id=eq.${rowId}&select=id,payload,client_updated_at,status`,
   );
-  const liveIds = body.map((r) => r.legacy_job_id);
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], liveIds);
-  assert.deepStrictEqual(deletedJobIds, [jobId]);
-  assert.strictEqual(jobs.length, 0);
-});
-
-test('sync: a never-synced offline creation survives reconcile', async () => {
-  const local = [{ jobId: `${RUN}_offline`, updatedAt: 5, createdAt: 5 }]; // no syncedAt
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], []);
-  assert.strictEqual(jobs.length, 1);
-  assert.deepStrictEqual(deletedJobIds, []);
-});
-
-test('sync: an out-of-scope job alive on the server is not treated as deleted', async () => {
-  const local = [{ jobId: 'other_detailer_job', updatedAt: 1, createdAt: 1, syncedAt: 1 }];
-  const { jobs, deletedJobIds } = reconcileJobsWithRemote(local, [], ['other_detailer_job']);
-  assert.strictEqual(jobs.length, 1);
-  assert.deepStrictEqual(deletedJobIds, []);
-});
-
-test('sync: conflict resolution keeps whichever side is newer', async () => {
-  const base = { jobId: 'c1', createdAt: 1, syncedAt: 1 };
-  const localNewer = reconcileJobsWithRemote(
-    [{ ...base, updatedAt: 900, v: 'local' }],
-    [{ ...base, updatedAt: 100, v: 'remote' }],
-    ['c1'],
+  const current = mapSupabaseJobToLegacyShape(body[0]);
+  const next = applyJobAction(current, action);
+  const row = toJobRow(next, current.dealershipId);
+  delete row.dealership_id;
+  delete row.legacy_job_id;
+  if (!row.created_by_user_id) delete row.created_by_user_id;
+  if (!row.assigned_detailer_id) delete row.assigned_detailer_id;
+  return asUser(
+    token,
+    `jobs?id=eq.${rowId}&client_updated_at=eq.${encodeURIComponent(body[0].client_updated_at)}`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify(row),
+    },
   );
-  assert.strictEqual(localNewer.jobs[0].v, 'local');
+};
 
-  const remoteNewer = reconcileJobsWithRemote(
-    [{ ...base, updatedAt: 100, v: 'local' }],
-    [{ ...base, updatedAt: 900, v: 'remote' }],
-    ['c1'],
+const actionFor = (type, jobId, at, data) => ({
+  id: `${RUN}_${type}_${Math.random().toString(36).slice(2, 7)}`,
+  type,
+  jobId,
+  at,
+  actor: { id: null, name: 'Alex' },
+  data,
+});
+
+test('sync: a pause sent later still records the time it was tapped', async () => {
+  const { id, jobId } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-TAP` });
+  const tappedAt = Date.now() - 5 * 60000; // tapped offline five minutes ago
+  const res = await sendAction(
+    world.alpha.detailerToken,
+    id,
+    actionFor('pause', jobId, tappedAt, { reason: 'Lunch / break' }),
   );
-  assert.strictEqual(remoteNewer.jobs[0].v, 'remote');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.length, 1, 'exactly one row updated');
+  const { body } = await svc(`jobs?id=eq.${id}&select=status,payload`);
+  assert.strictEqual(body[0].status, 'paused');
+  assert.strictEqual(body[0].payload.pauseEvents[0].timestamp, tappedAt);
+  assert.strictEqual(body[0].payload.notes[0].text, 'Paused: Lunch / break');
 });
 
-test('sync: pending writes are surfaced to the detailer', () => {
-  assert.strictEqual(describeSyncStatus({ pendingCount: 0, lastError: null }), null);
-  assert.strictEqual(describeSyncStatus({ pendingCount: 2 }).tone, 'warning');
-  assert.strictEqual(describeSyncStatus({ lastError: 'offline' }).tone, 'error');
+test('sync: a stale write (job changed underneath) updates nothing, so it is retried', async () => {
+  const { id } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-STALE` });
+  const res = await asUser(
+    world.alpha.detailerToken,
+    `jobs?id=eq.${id}&client_updated_at=eq.${encodeURIComponent(iso(Date.now() - 999999))}`,
+    {
+      method: 'PATCH',
+      headers: {
+        apikey: ANON,
+        Authorization: `Bearer ${world.alpha.detailerToken}`,
+        'Content-Type': 'application/json',
+        Prefer: 'return=representation',
+      },
+      body: JSON.stringify({ status: 'paused' }),
+    },
+  );
+  assert.deepStrictEqual(res.body, [], 'no row may match an out-of-date version');
 });
 
+test('sync: the same action sent twice only applies once', async () => {
+  const { id, jobId } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-TWICE` });
+  const note = actionFor('note', jobId, Date.now(), { text: 'odor in cabin' });
+  await sendAction(world.alpha.detailerToken, id, note);
+  await sendAction(world.alpha.detailerToken, id, note);
+  const { body } = await svc(`jobs?id=eq.${id}&select=payload`);
+  assert.strictEqual(body[0].payload.notes.filter((n) => n.text === 'odor in cabin').length, 1);
+});
 // =========================================================================
 // D. Manager actions & the completed-job lock
 // =========================================================================
@@ -404,33 +440,39 @@ test('manager: reopen-for-rework flips a completed job to needs_rework', async (
   assert.strictEqual(body[0].payload.endTime, null);
 });
 
-test('manager: reassigning moves job visibility to the new detailer', async () => {
-  const payload = {
-    jobId: 'r1',
-    detailerName: 'Alex',
-    operationalUserId: 'du_alex',
-    detailers: ['Alex'],
+test('manager: reassigning moves the job to the new person by id', async () => {
+  const { id } = await seedJob(world.alpha.id, { stockNumber: `${RUN}-REAS` });
+  const res = await asUser(world.alpha.managerToken, `jobs?id=eq.${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assigned_detailer_id: world.alpha.detailerId }),
+  });
+  assert.ok(res.status < 300, `manager reassign should succeed (got ${res.status})`);
+  // The detailer's "my cars" query filters on assigned_detailer_id.
+  const mine = await asUser(
+    world.alpha.detailerToken,
+    `jobs?assigned_detailer_id=eq.${world.alpha.detailerId}&id=eq.${id}&select=id`,
+  );
+  assert.strictEqual(mine.body.length, 1);
+});
+
+test('manager: starting rework does not bill the time a car sat finished', () => {
+  const start = Date.now() - 4 * 3600000;
+  const finished = start + 3600000;
+  const reopened = {
+    jobId: 'rw1',
+    status: 'needs_rework',
+    startTime: start,
+    totalPauseTime: 0,
+    endTime: null,
+    pauseEvents: [{ type: 'pause', timestamp: finished, reason: 'rework' }],
+    custodyEvents: [],
+    notes: [],
+    photos: [],
   };
-  const reassigned = { ...payload, detailerName: 'Jordan', detailers: ['Alex', 'Jordan'] };
-  delete reassigned.operationalUserId;
-
-  assert.strictEqual(jobBelongsToOperator(payload, 'du_alex', 'Alex'), true);
-  assert.strictEqual(jobBelongsToOperator(reassigned, 'du_jordan', 'Jordan'), true);
-  assert.strictEqual(jobBelongsToOperator(reassigned, 'du_alex', 'Alex'), false);
+  let job = applyJobAction(reopened, actionFor('resume', 'rw1', finished + 2 * 3600000));
+  job = applyJobAction(job, actionFor('complete', 'rw1', finished + 2 * 3600000 + 600000));
+  assert.strictEqual(job.totalActiveTime, 3600000 + 600000);
 });
-
-test("manager: a manager's change is newer, so the device accepts it", async () => {
-  const startedAt = Date.now() - 60000;
-  const local = [
-    { jobId: 'm1', status: 'completed', updatedAt: startedAt, createdAt: startedAt, syncedAt: 1 },
-  ];
-  const remote = [
-    { jobId: 'm1', status: 'needs_rework', updatedAt: Date.now(), createdAt: startedAt },
-  ];
-  const { jobs } = reconcileJobsWithRemote(local, remote, ['m1']);
-  assert.strictEqual(jobs[0].status, 'needs_rework');
-});
-
 // =========================================================================
 // E. Photo upload — the ArrayBuffer path the app actually uses
 // =========================================================================
@@ -943,15 +985,26 @@ test("pin reset: a manager cannot touch ANOTHER dealership's employee", async (t
 // I. Detailer scoping
 // =========================================================================
 
-test('scoping: two detailers with the SAME NAME do not see each other jobs', () => {
-  const mikeA = { jobId: 'a', detailerName: 'Mike', operationalUserId: 'm1' };
-  const mikeB = { jobId: 'b', detailerName: 'Mike', operationalUserId: 'm2' };
-  assert.strictEqual(jobBelongsToOperator(mikeA, 'm1', 'Mike'), true);
-  assert.strictEqual(jobBelongsToOperator(mikeB, 'm1', 'Mike'), false);
-});
-
-test('scoping: legacy jobs without an operator id still match by name', () => {
-  const legacy = { jobId: 'l', detailerName: 'Alex' };
-  assert.strictEqual(jobBelongsToOperator(legacy, 'du_alex', 'Alex'), true);
-  assert.strictEqual(jobBelongsToOperator(legacy, 'du_alex', 'Jordan'), false);
+test('scoping: two detailers with the SAME NAME are separate people', async () => {
+  // Per-employee accounts mean jobs are scoped by user id, never by name.
+  const payloadA = applyJobAction(null, {
+    id: 'x1',
+    type: 'create',
+    jobId: 'sa',
+    at: 1,
+    actor: { id: 'mike-a', name: 'Mike' },
+    data: {},
+  });
+  const payloadB = applyJobAction(null, {
+    id: 'x2',
+    type: 'create',
+    jobId: 'sb',
+    at: 1,
+    actor: { id: 'mike-b', name: 'Mike' },
+    data: {},
+  });
+  assert.notStrictEqual(
+    toJobRow(payloadA, 'd').assigned_detailer_id,
+    toJobRow(payloadB, 'd').assigned_detailer_id,
+  );
 });

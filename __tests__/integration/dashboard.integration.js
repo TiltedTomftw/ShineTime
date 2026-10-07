@@ -1,11 +1,8 @@
 // Tests the manager dashboard's REAL shipped code (dashboard/index.html) by
-// loading it in a DOM with a controllable fake Supabase client.
+// loading it in jsdom with a controllable fake Supabase client. No network.
 //
-// The dashboard is a single self-contained HTML file with its logic inline, so
-// it had zero automated coverage despite being what managers actually use. This
-// executes the genuine script — not a copy — so the assertions track production.
-//
-// Run with:  npm run test:integration
+// Run with:  node --test __tests__/integration/dashboard.integration.js
+//       or:  npm run test:integration
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -16,50 +13,90 @@ const { JSDOM } = require('jsdom');
 const HTML = fs.readFileSync(path.resolve(__dirname, '../../dashboard/index.html'), 'utf8');
 const DEALERSHIP = '00000000-0000-0000-0000-000000000123';
 
-// A thenable query builder: every PostgREST-ish method returns itself, and
-// awaiting it resolves to { data, error }.
-const makeQuery = (result) => {
-  const q = {};
-  const methods = ['select', 'eq', 'is', 'order', 'limit', 'gte', 'lte', 'in', 'neq', 'single'];
-  for (const m of methods) q[m] = () => q;
-  q.then = (resolve) => resolve(result);
-  q.update = () => q;
-  q.insert = () => q;
+// A thenable query builder: chain methods return itself; awaiting resolves to
+// { data, error }. single()/maybeSingle() resolve to the first row.
+const makeQuery = (table, world) => {
+  const q = { table, ops: [] };
+  const chain = ['select', 'eq', 'is', 'order', 'limit', 'gte', 'lte', 'in', 'neq', 'gt', 'lt'];
+  for (const m of chain) {
+    q[m] = (...args) => {
+      q.ops.push([m, ...args]);
+      return q;
+    };
+  }
+  const rows = () => world.tables[table] || [];
+  q.update = (patch) => {
+    world.updates.push({ table, patch });
+    return q;
+  };
+  q.single = () => Promise.resolve({ data: rows()[0] || null, error: null });
+  q.maybeSingle = () => Promise.resolve({ data: rows()[0] || null, error: null });
+  q.then = (resolve) => {
+    if (table === 'jobs' && q.ops.some(([m]) => m === 'select')) world.jobFetches += 1;
+    resolve({ data: rows(), error: null });
+  };
   return q;
 };
 
-// Build a live dashboard DOM preloaded with `rows` as the jobs table contents.
-async function mountDashboard(rows = []) {
-  const updates = [];
+async function mountDashboard(rows = [], { signedIn = true, photos = [], employees = [] } = {}) {
+  const world = {
+    tables: {
+      jobs: rows,
+      job_photos: photos,
+      dealership_memberships: [
+        {
+          dealership_id: DEALERSHIP,
+          role: 'owner',
+          dealerships: { id: DEALERSHIP, name: 'Alpha Ford' },
+        },
+      ],
+      profiles: [{ full_name: 'Dana Manager' }],
+    },
+    updates: [],
+    invokes: [],
+    jobFetches: 0,
+  };
   const dom = new JSDOM(HTML, {
-    url: `https://example.test/?d=${DEALERSHIP}`,
+    url: 'https://example.test/',
     runScripts: 'dangerously',
     beforeParse(window) {
-      // The page installs a periodic auto-refresh (setInterval). Across many
-      // mounted DOMs those timers keep the event loop alive forever and the
-      // test run never exits — stub them out.
       window.setInterval = () => 0;
       window.clearInterval = () => {};
-      // The page loads supabase-js from a CDN; jsdom doesn't fetch it, so
-      // provide the shape the page expects before its inline script runs.
       window.supabase = {
         createClient: () => ({
           auth: {
-            getSession: async () => ({ data: { session: { user: { id: 'mgr' } } }, error: null }),
-            signInWithPassword: async () => ({ data: { user: { id: 'mgr' } }, error: null }),
+            getSession: async () => ({
+              data: {
+                session: signedIn ? { user: { id: 'mgr', email: 'dana@alpha.test' } } : null,
+              },
+              error: null,
+            }),
+            signInWithPassword: async () => ({
+              data: { user: { id: 'mgr', email: 'dana@alpha.test' } },
+              error: null,
+            }),
             signOut: async () => ({ error: null }),
-            onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
           },
-          from: () => {
-            const q = makeQuery({ data: rows, error: null });
-            const origUpdate = q.update;
-            q.update = (patch) => {
-              updates.push(patch);
-              return origUpdate();
-            };
-            return q;
+          from: (table) => makeQuery(table, world),
+          rpc: async () => ({ data: 'K7M3QPX', error: null }),
+          functions: {
+            invoke: async (name, { body }) => {
+              world.invokes.push(body);
+              if (body.action === 'list_employees') return { data: { employees }, error: null };
+              return { data: { ok: true }, error: null };
+            },
           },
-          storage: { from: () => ({ createSignedUrl: async () => ({ data: null, error: null }) }) },
+          storage: {
+            from: () => ({
+              createSignedUrls: async (paths) => ({
+                data: paths.map((p) => ({
+                  path: p,
+                  signedUrl: `https://signed.test/${p}?fresh=1`,
+                })),
+                error: null,
+              }),
+            }),
+          },
         }),
       };
       window.alert = () => {};
@@ -67,16 +104,14 @@ async function mountDashboard(rows = []) {
       window.prompt = () => null;
     },
   });
-
-  // Let the page's async bootstrap (initializeDashboardApp -> loadDashboard) settle.
   await new Promise((r) => setTimeout(r, 60));
-  await dom.window.loadDashboard?.();
-  await new Promise((r) => setTimeout(r, 20));
-  return { dom, window: dom.window, doc: dom.window.document, updates };
+  return { dom, window: dom.window, doc: dom.window.document, world };
 }
 
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
 const jobRow = (over = {}) => ({
-  id: over.id || `row-${Math.random().toString(36).slice(2, 7)}`,
+  id: over.id || `row-${over.legacy_job_id || 'job_1'}`,
   legacy_job_id: over.legacy_job_id || 'job_1',
   status: over.status || 'in_progress',
   stock_number: over.stock_number ?? 'S-1',
@@ -85,7 +120,6 @@ const jobRow = (over = {}) => ({
   year: '2024',
   color: 'Blue',
   created_at: new Date(over.createdAt || Date.now()).toISOString(),
-  updated_at: new Date().toISOString(),
   client_updated_at: new Date().toISOString(),
   started_at: new Date(over.startTime || Date.now() - 3600000).toISOString(),
   ended_at: over.endTime ? new Date(over.endTime).toISOString() : null,
@@ -98,7 +132,7 @@ const jobRow = (over = {}) => ({
     model: over.model ?? 'F-150',
     status: over.status || 'in_progress',
     detailerName: over.detailerName || 'Alex',
-    detailers: [over.detailerName || 'Alex'],
+    detailers: over.detailers || [over.detailerName || 'Alex'],
     startTime: over.startTime || Date.now() - 3600000,
     endTime: over.endTime ?? null,
     totalActiveTime: over.totalActiveTime || 0,
@@ -108,82 +142,145 @@ const jobRow = (over = {}) => ({
     notes: over.notes || [],
     photos: over.photos || [],
     custodyEvents: over.custodyEvents || [],
-    pauseEvents: [],
+    pauseEvents: over.pauseEvents || [],
     ...(over.payloadExtra || {}),
   },
 });
 
-// --- pure helpers shipped in the page ------------------------------------
+const done = (id, ms, extra = {}) =>
+  jobRow({
+    legacy_job_id: id,
+    status: 'completed',
+    totalActiveTime: ms,
+    endTime: Date.now(),
+    ...extra,
+  });
 
-test('dashboard: escapeHtml neutralises injected markup (XSS guard)', async () => {
+// --- sign-in -----------------------------------------------------------------
+
+test('dashboard: signed out shows a real sign-in form with a masked password', async () => {
+  const { doc, dom } = await mountDashboard([], { signedIn: false });
+  assert.strictEqual(doc.getElementById('signin').hidden, false);
+  assert.strictEqual(doc.getElementById('app').hidden, true);
+  assert.strictEqual(doc.getElementById('signinPassword').type, 'password');
+  dom.window.close();
+});
+
+test('dashboard: no dealership UUID is needed — it comes from the manager account', async () => {
+  const { doc, dom } = await mountDashboard([jobRow()]);
+  assert.strictEqual(doc.getElementById('dealershipTitle').textContent, 'Alpha Ford');
+  assert.strictEqual(doc.getElementById('whoEmail').textContent, 'dana@alpha.test');
+  dom.window.close();
+});
+
+test('dashboard: the Wipe Database control is gone', async () => {
+  const { window, doc, dom } = await mountDashboard([jobRow()]);
+  assert.strictEqual(typeof window.wipeDatabase, 'undefined');
+  assert.ok(!doc.body.textContent.includes('Wipe Database'));
+  dom.window.close();
+});
+
+// --- pure helpers ----------------------------------------------------------
+
+test('dashboard: escapeHtml neutralises injected markup', async () => {
   const { window, dom } = await mountDashboard();
   const out = window.escapeHtml('<img src=x onerror=alert(1)>');
-  assert.ok(!out.includes('<img'), 'raw tag must not survive');
-  assert.ok(out.includes('&lt;'), 'angle brackets must be entity-encoded');
+  assert.ok(!out.includes('<img') && out.includes('&lt;'));
   dom.window.close();
 });
 
-test('dashboard: mapSupabaseJobToLegacyShape prefers payload values over row columns', async () => {
+test('dashboard: mapSupabaseJobToLegacyShape prefers payload values and keeps the row id', async () => {
   const { window, dom } = await mountDashboard();
   const mapped = window.mapSupabaseJobToLegacyShape(
-    jobRow({ make: 'RowMake', payloadExtra: { make: 'PayloadMake' } }),
+    jobRow({ id: 'row-abc', make: 'RowMake', payloadExtra: { make: 'PayloadMake' } }),
   );
   assert.strictEqual(mapped.make, 'PayloadMake');
+  assert.strictEqual(mapped.remoteId, 'row-abc');
   dom.window.close();
 });
 
-test('dashboard: mapSupabaseJobToLegacyShape keeps the DB row id for manager write-backs', async () => {
-  const { window, dom } = await mountDashboard();
-  const row = jobRow({ id: 'row-abc' });
-  assert.strictEqual(window.mapSupabaseJobToLegacyShape(row).remoteId, 'row-abc');
-  dom.window.close();
-});
-
-test('dashboard: elapsed time excludes accumulated pause time', async () => {
+test('dashboard: elapsed time excludes pauses and holds still while waiting for rework', async () => {
   const { window, dom } = await mountDashboard();
   const now = Date.now();
-  const elapsed = window.getElapsedTime({
+  const running = window.getElapsedTime({
     startTime: now - 3600000,
     totalPauseTime: 600000,
     status: 'in_progress',
-    pauseEvents: [],
   });
-  assert.ok(elapsed > 0 && elapsed <= 3000000 + 5000, `expected ~50m, got ${elapsed}`);
+  assert.ok(running > 2990000 && running <= 3005000);
+  const rework = window.getElapsedTime({
+    startTime: now - 3600000,
+    totalPauseTime: 0,
+    status: 'needs_rework',
+    pauseEvents: [{ type: 'pause', timestamp: now - 1800000 }],
+  });
+  assert.ok(rework > 1790000 && rework <= 1805000, `got ${rework}`);
   dom.window.close();
 });
 
-// --- rendering + stats ----------------------------------------------------
+// --- rendering + stats -------------------------------------------------------
 
-test('dashboard: stat tiles reflect the job mix', async () => {
+test('dashboard: stat tiles reflect the job mix, including rework', async () => {
   const { doc, dom } = await mountDashboard([
-    jobRow({
-      legacy_job_id: 'a',
-      status: 'completed',
-      totalActiveTime: 3600000,
-      endTime: Date.now(),
-    }),
-    jobRow({
-      legacy_job_id: 'b',
-      status: 'completed',
-      totalActiveTime: 1800000,
-      endTime: Date.now(),
-    }),
+    done('a', 3600000),
+    done('b', 1800000),
     jobRow({ legacy_job_id: 'c', status: 'in_progress' }),
     jobRow({ legacy_job_id: 'd', status: 'paused' }),
+    jobRow({ legacy_job_id: 'e', status: 'needs_rework' }),
   ]);
   assert.strictEqual(doc.getElementById('statCompleted').textContent, '2');
-  assert.strictEqual(doc.getElementById('statActive').textContent, '2', 'in_progress + paused');
+  assert.strictEqual(doc.getElementById('statActive').textContent, '3');
   assert.strictEqual(doc.getElementById('statPaused').textContent, '1');
-  assert.strictEqual(doc.getElementById('statAvg').textContent, '45m', 'avg of 60m and 30m');
+  assert.strictEqual(doc.getElementById('statRework').textContent, '1');
+  assert.strictEqual(doc.getElementById('statAvg').textContent, '45m');
+  dom.window.close();
+});
+
+test('dashboard: defaults to Today and says which period the numbers cover', async () => {
+  const { doc, dom } = await mountDashboard([jobRow()]);
+  assert.strictEqual(doc.getElementById('dateFilter').value, 'today');
+  assert.strictEqual(doc.getElementById('periodLabel').textContent, 'today');
+  dom.window.close();
+});
+
+test('dashboard: cards lead with the stock number, never "? ?"', async () => {
+  const { doc, dom } = await mountDashboard([
+    jobRow({ stock_number: 'P4521', make: '', model: '' }),
+  ]);
+  const card = doc.querySelector('.job-card');
+  assert.strictEqual(card.querySelector('.job-title').textContent, '#P4521');
+  assert.ok(!card.textContent.includes('? ?'));
+  assert.ok(!card.textContent.includes('Standard'), 'meaningless "Standard" tag removed');
+  dom.window.close();
+});
+
+test('dashboard: multi-detailer jobs show a real arrow (no mojibake)', async () => {
+  const { doc, dom } = await mountDashboard([
+    jobRow({ detailers: ['Mike', 'Ana'], detailerName: 'Ana' }),
+  ]);
+  const text = doc.getElementById('jobsContainer').textContent;
+  assert.ok(text.includes('Mike → Ana'), text);
+  assert.ok(!/â†/.test(doc.documentElement.innerHTML));
+  dom.window.close();
+});
+
+test('dashboard: counts are pluralised properly', async () => {
+  const { doc, window, dom } = await mountDashboard([
+    jobRow({ legacy_job_id: 'a' }),
+    jobRow({ legacy_job_id: 'b' }),
+  ]);
+  assert.strictEqual(doc.getElementById('jobCount').textContent, '2 jobs');
+  doc.getElementById('searchFilter').value = 'zzz-no-match';
+  window.renderJobs();
+  assert.strictEqual(doc.getElementById('jobCount').textContent, '0 jobs');
   dom.window.close();
 });
 
 test('dashboard: coverage counts notes, photos and custody events', async () => {
   const { doc, dom } = await mountDashboard([
     jobRow({
-      legacy_job_id: 'a',
       notes: [{ text: 'n1' }, { text: 'n2' }],
-      photos: [{ url: 'p' }],
+      photos: [{ storagePath: 'p' }],
       custodyEvents: [{ type: 'start' }, { type: 'pause' }, { type: 'resume' }],
     }),
   ]);
@@ -193,40 +290,27 @@ test('dashboard: coverage counts notes, photos and custody events', async () => 
   dom.window.close();
 });
 
-test('dashboard: a malicious stock number is rendered inert, not executed', async () => {
+test('dashboard: a malicious stock number is rendered inert', async () => {
   const { doc, dom } = await mountDashboard([
-    jobRow({ legacy_job_id: 'x', stock_number: '<img src=x onerror=alert(1)>' }),
+    jobRow({ stock_number: '<img src=x onerror=alert(1)>' }),
   ]);
-  const injected = doc.querySelector('#jobsContainer img[onerror]');
-  assert.strictEqual(injected, null, 'no live element may be injected from job data');
-  assert.ok(
-    doc.getElementById('jobsContainer').textContent.includes('<img'),
-    'it should appear as literal text instead',
-  );
+  assert.strictEqual(doc.querySelector('#jobsContainer img[onerror]'), null);
+  assert.ok(doc.getElementById('jobsContainer').textContent.includes('<img'));
   dom.window.close();
 });
 
-test('dashboard: job count reflects what is rendered', async () => {
-  const { doc, dom } = await mountDashboard([
-    jobRow({ legacy_job_id: 'a' }),
-    jobRow({ legacy_job_id: 'b' }),
-    jobRow({ legacy_job_id: 'c' }),
-  ]);
-  assert.strictEqual(doc.getElementById('jobCount').textContent, '3 jobs');
-  dom.window.close();
-});
+// --- filters -------------------------------------------------------------------
 
-// --- filters --------------------------------------------------------------
-
-test('dashboard: free-text search narrows the job list', async () => {
-  const { doc, window, dom } = await mountDashboard([
+test('dashboard: search narrows the list in the browser without refetching', async () => {
+  const { doc, window, world, dom } = await mountDashboard([
     jobRow({ legacy_job_id: 'a', make: 'Ford', model: 'F-150' }),
     jobRow({ legacy_job_id: 'b', make: 'Tesla', model: 'Model 3' }),
   ]);
+  const fetchesBefore = world.jobFetches;
   doc.getElementById('searchFilter').value = 'Tesla';
-  await window.loadDashboard();
-  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 jobs');
-  assert.ok(doc.getElementById('jobsContainer').textContent.includes('Tesla'));
+  window.renderJobs();
+  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 job');
+  assert.strictEqual(world.jobFetches, fetchesBefore, 'typing must not hit the database');
   dom.window.close();
 });
 
@@ -236,8 +320,8 @@ test('dashboard: search also matches note text', async () => {
     jobRow({ legacy_job_id: 'b' }),
   ]);
   doc.getElementById('searchFilter').value = 'curb';
-  await window.loadDashboard();
-  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 jobs');
+  window.renderJobs();
+  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 job');
   dom.window.close();
 });
 
@@ -247,157 +331,184 @@ test('dashboard: the detailer filter is populated and narrows results', async ()
     jobRow({ legacy_job_id: 'b', detailerName: 'Jordan' }),
   ]);
   const options = [...doc.getElementById('detailerFilter').options].map((o) => o.value);
-  assert.ok(options.includes('Alex') && options.includes('Jordan'), 'both detailers listed');
-
+  assert.ok(options.includes('Alex') && options.includes('Jordan'));
   doc.getElementById('detailerFilter').value = 'Jordan';
-  await window.loadDashboard();
-  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 jobs');
+  window.renderJobs();
+  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 job');
   dom.window.close();
 });
 
-test('dashboard: clearFilters restores the full list', async () => {
+test('dashboard: the status filter offers Rework', async () => {
+  const { doc, dom } = await mountDashboard();
+  const options = [...doc.getElementById('statusFilter').options].map((o) => o.value);
+  assert.ok(options.includes('needs_rework'));
+  dom.window.close();
+});
+
+test('dashboard: clearFilters restores the full list and Today', async () => {
   const { doc, window, dom } = await mountDashboard([
     jobRow({ legacy_job_id: 'a', make: 'Ford' }),
     jobRow({ legacy_job_id: 'b', make: 'Tesla' }),
   ]);
   doc.getElementById('searchFilter').value = 'Tesla';
-  await window.loadDashboard();
-  assert.strictEqual(doc.getElementById('jobCount').textContent, '1 jobs');
-
+  doc.getElementById('dateFilter').value = 'all';
+  window.renderJobs();
   window.clearFilters();
-  await window.loadDashboard();
+  await settle();
   assert.strictEqual(doc.getElementById('jobCount').textContent, '2 jobs');
+  assert.strictEqual(doc.getElementById('dateFilter').value, 'today');
   dom.window.close();
 });
 
-// --- insights + drill-downs ----------------------------------------------
+// --- insights + drill-downs -------------------------------------------------------
 
-test('dashboard: Top Detailers ranks by completed jobs and is clickable', async () => {
+test('dashboard: Top Detailers ranks by completed cars and entries are buttons', async () => {
   const { doc, dom } = await mountDashboard([
-    jobRow({
-      legacy_job_id: 'a',
-      detailerName: 'Alex',
-      status: 'completed',
-      totalActiveTime: 60000,
-      endTime: Date.now(),
-    }),
-    jobRow({
-      legacy_job_id: 'b',
-      detailerName: 'Alex',
-      status: 'completed',
-      totalActiveTime: 60000,
-      endTime: Date.now(),
-    }),
-    jobRow({
-      legacy_job_id: 'c',
-      detailerName: 'Jordan',
-      status: 'completed',
-      totalActiveTime: 60000,
-      endTime: Date.now(),
-    }),
+    done('a', 60000, { detailerName: 'Alex' }),
+    done('b', 60000, { detailerName: 'Alex' }),
+    done('c', 60000, { detailerName: 'Jordan' }),
   ]);
-  const items = [...doc.querySelectorAll('#topDetailers li')];
-  assert.ok(items[0].textContent.includes('Alex'), 'Alex (2 jobs) should rank first');
-  assert.ok(items[0].getAttribute('onclick'), 'entries must drill down');
+  const first = doc.querySelector('#topDetailers li button');
+  assert.ok(first.textContent.includes('Alex'));
+  assert.strictEqual(first.dataset.detailer, 'Alex');
   dom.window.close();
 });
 
-test('dashboard: Longest Active Jobs is ordered oldest-first and clickable', async () => {
+test('dashboard: Longest Open Jobs is ordered oldest-first and includes rework', async () => {
   const now = Date.now();
   const { doc, dom } = await mountDashboard([
     jobRow({ legacy_job_id: 'new', stock_number: 'NEW-1', startTime: now - 600000 }),
     jobRow({ legacy_job_id: 'old', stock_number: 'OLD-1', startTime: now - 18000000 }),
   ]);
-  const items = [...doc.querySelectorAll('#slowJobs li')];
-  assert.ok(items[0].textContent.includes('OLD-1'), 'oldest active job first');
-  assert.ok(items[0].getAttribute('onclick'), 'entries must drill down');
+  const items = [...doc.querySelectorAll('#slowJobs li button')];
+  assert.ok(items[0].textContent.includes('OLD-1'));
+  assert.strictEqual(items[0].dataset.job, 'old');
   dom.window.close();
 });
 
-test('dashboard: the detailer drill-down shows that detailer metrics and jobs', async () => {
+test('dashboard: the detailer drill-down shows only that detailer', async () => {
   const { doc, window, dom } = await mountDashboard([
-    jobRow({
-      legacy_job_id: 'a',
-      detailerName: 'Alex',
-      status: 'completed',
-      totalActiveTime: 1200000,
-      endTime: Date.now(),
-    }),
-    jobRow({ legacy_job_id: 'b', detailerName: 'Alex', status: 'in_progress' }),
-    jobRow({
-      legacy_job_id: 'c',
-      detailerName: 'Jordan',
-      status: 'completed',
-      totalActiveTime: 60000,
-      endTime: Date.now(),
-    }),
+    done('a', 1200000, { detailerName: 'Alex' }),
+    jobRow({ legacy_job_id: 'b', detailerName: 'Alex' }),
+    done('c', 60000, { detailerName: 'Jordan', stock_number: 'JORDAN-1' }),
   ]);
   window.showDetailerDetails('Alex');
   const body = doc.getElementById('modalBody').textContent;
   assert.ok(body.includes('Alex'));
-  assert.ok(!body.includes('Jordan'), "another detailer's jobs must not leak in");
-  assert.ok(doc.getElementById('jobModal').classList.contains('show'), 'modal opens');
+  assert.ok(!body.includes('JORDAN-1'));
+  assert.ok(doc.getElementById('jobModal').classList.contains('show'));
   dom.window.close();
 });
 
-test('dashboard: the job modal opens with the vehicle and time tracking', async () => {
-  const { doc, window, dom } = await mountDashboard([jobRow({ legacy_job_id: 'a' })]);
-  window.showJobDetails(window.mapSupabaseJobToLegacyShape(jobRow({ legacy_job_id: 'a' })));
+test('dashboard: the job modal opens with vehicle and time tracking, and closes', async () => {
+  const { doc, window, dom } = await mountDashboard([jobRow()]);
+  window.openJob('job_1');
   const body = doc.getElementById('modalBody').textContent;
   assert.ok(body.includes('F-150'));
   assert.ok(body.includes('Time Tracking'));
-  dom.window.close();
-});
-
-test('dashboard: closeModal returns the manager to the dashboard', async () => {
-  const { doc, window, dom } = await mountDashboard([jobRow({ legacy_job_id: 'a' })]);
-  window.showDetailerDetails('Alex');
-  assert.ok(doc.getElementById('jobModal').classList.contains('show'));
+  assert.strictEqual(
+    doc.querySelector('#jobModal [role="dialog"]').getAttribute('aria-modal'),
+    'true',
+  );
   window.closeModal(null, 'jobModal');
-  assert.ok(!doc.getElementById('jobModal').classList.contains('show'), 'modal closes');
+  assert.ok(!doc.getElementById('jobModal').classList.contains('show'));
   dom.window.close();
 });
 
-// --- manager actions + destructive guard ---------------------------------
-
-test('dashboard: a completed job offers Reopen for Rework; an active one does not', async () => {
-  const { doc, window, dom } = await mountDashboard();
-  window.showJobDetails(
-    window.mapSupabaseJobToLegacyShape(
-      jobRow({ legacy_job_id: 'a', status: 'completed', endTime: Date.now() }),
-    ),
+test('dashboard: photos are signed fresh from job_photos, not old payload URLs', async () => {
+  const { doc, window, dom } = await mountDashboard(
+    [jobRow({ photos: [{ url: 'https://expired.test/old.jpg' }] })],
+    {
+      photos: [
+        {
+          storage_path: 'd/row/p1.jpg',
+          uploaded_by_name: 'Alex',
+          created_at: new Date().toISOString(),
+        },
+      ],
+    },
   );
-  assert.ok(
-    doc.getElementById('modalBody').innerHTML.includes('Reopen for Rework'),
-    'completed job should offer rework',
-  );
-
-  window.showJobDetails(
-    window.mapSupabaseJobToLegacyShape(jobRow({ legacy_job_id: 'b', status: 'in_progress' })),
-  );
-  assert.ok(
-    !doc.getElementById('modalBody').innerHTML.includes('Reopen for Rework'),
-    'an active job must not offer rework',
-  );
-  assert.ok(
-    doc.getElementById('modalBody').innerHTML.includes('Reassign Detailer'),
-    'reassign is always available',
-  );
+  window.openJob('job_1');
+  await settle();
+  const img = doc.querySelector('#photoGrid img');
+  assert.ok(img, 'photo rendered');
+  assert.strictEqual(img.getAttribute('src'), 'https://signed.test/d/row/p1.jpg?fresh=1');
+  assert.ok(!doc.getElementById('modalBody').innerHTML.includes('expired.test'));
   dom.window.close();
 });
 
-test('dashboard: Wipe Database does NOTHING unless DELETE is typed', async () => {
-  const { window, updates, dom } = await mountDashboard([jobRow({ legacy_job_id: 'a' })]);
-  window.prompt = () => 'yes'; // wrong confirmation
-  await window.wipeDatabase();
-  assert.strictEqual(updates.length, 0, 'no write may be issued without the exact word');
+// --- manager actions -----------------------------------------------------------
 
-  window.prompt = () => 'delete'; // case-insensitive match IS accepted
-  await window.wipeDatabase();
-  assert.ok(updates.length > 0, 'typing DELETE proceeds');
-  assert.ok(updates[0].deleted_at, 'wipe is a soft delete');
-  // wipeDatabase kicks off an un-awaited loadDashboard(); let it settle before
-  // tearing the window down, or it touches a closed DOM after the test ends.
-  await new Promise((r) => setTimeout(r, 50));
+test('dashboard: only completed jobs offer Reopen for Rework; reassign is available', async () => {
+  const { doc, window, dom } = await mountDashboard([
+    done('a', 60000),
+    jobRow({ legacy_job_id: 'b', status: 'in_progress' }),
+  ]);
+  window.openJob('a');
+  assert.ok(doc.getElementById('modalBody').innerHTML.includes('Reopen for Rework'));
+  window.openJob('b');
+  assert.ok(!doc.getElementById('modalBody').innerHTML.includes('Reopen for Rework'));
+  assert.ok(doc.getElementById('modalBody').innerHTML.includes('Reassign Detailer'));
+  dom.window.close();
+});
+
+test('dashboard: sending back for rework records the note and holds the clock from completion', async () => {
+  const endTime = Date.now() - 7200000;
+  const row = done('a', 3600000, { payloadExtra: { endTime } });
+  const { doc, window, world, dom } = await mountDashboard([row]);
+  window.openJob('a');
+  window.toggleForm('reworkForm');
+  doc.getElementById('reworkNote').value = 'Swirl marks on hood';
+  await window.submitRework({ preventDefault() {} }, 'a');
+  const update = world.updates.find((u) => u.table === 'jobs');
+  assert.ok(update, 'a write was issued');
+  assert.strictEqual(update.patch.status, 'needs_rework');
+  const { payload } = update.patch;
+  assert.strictEqual(payload.endTime, null);
+  assert.deepStrictEqual(payload.pauseEvents[payload.pauseEvents.length - 1].timestamp, endTime);
+  const rework = payload.custodyEvents[payload.custodyEvents.length - 1];
+  assert.strictEqual(rework.type, 'rework');
+  assert.strictEqual(rework.note, 'Swirl marks on hood');
+  assert.strictEqual(rework.detailerName, 'Dana Manager');
+  dom.window.close();
+});
+
+test('dashboard: reassigning picks from the team and moves the job to that person', async () => {
+  const { doc, window, world, dom } = await mountDashboard([jobRow({ legacy_job_id: 'a' })], {
+    employees: [
+      { userId: 'u-ana', name: 'Ana', role: 'detailer', isActive: true },
+      { userId: 'u-bo', name: 'Bo', role: 'detailer', isActive: false },
+    ],
+  });
+  window.openJob('a');
+  await window.openReassign();
+  const options = [...doc.getElementById('reassignSelect').options].map((o) => o.value);
+  assert.ok(options.includes('u-ana'));
+  assert.ok(!options.includes('u-bo'), 'turned-off staff are not offered');
+  doc.getElementById('reassignSelect').value = 'u-ana';
+  await window.submitReassign({ preventDefault() {} }, 'a');
+  const update = world.updates.find((u) => u.table === 'jobs');
+  assert.strictEqual(update.patch.assigned_detailer_id, 'u-ana');
+  assert.strictEqual(update.patch.payload.detailerName, 'Ana');
+  assert.strictEqual(update.patch.payload.operationalUserId, 'u-ana');
+  dom.window.close();
+});
+
+test('dashboard: the Team page lists staff and resets a PIN', async () => {
+  const { doc, window, world, dom } = await mountDashboard([], {
+    employees: [
+      { userId: 'u-ana', name: 'Ana', role: 'detailer', isActive: true, lastActiveAt: null },
+    ],
+  });
+  await window.showTeam();
+  assert.ok(doc.getElementById('modalBody').textContent.includes('Ana'));
+  window.startPinReset('u-ana');
+  doc.getElementById('newPin').value = '4321';
+  await window.submitPinReset({ preventDefault() {} });
+  const reset = world.invokes.find((b) => b.action === 'reset_pin');
+  assert.deepStrictEqual(
+    { id: reset.employeeUserId, pin: reset.newPin, d: reset.dealershipId },
+    { id: 'u-ana', pin: '4321', d: DEALERSHIP },
+  );
   dom.window.close();
 });
