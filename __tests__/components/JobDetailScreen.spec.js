@@ -103,9 +103,20 @@ describe('JobDetailScreen', () => {
     await press('Pause job');
     expect(mockPerform).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job_1' }), 'pause', {
       reason: 'Sold unit came in',
-      note: '',
     });
     expect(screen.getByText('Paused')).toBeTruthy();
+  });
+
+  it('"Other" reveals a box and the typed text becomes the reason', async () => {
+    await mount(baseJob());
+    await press('Pause');
+    expect(screen.queryByLabelText('Other reason')).toBeNull();
+    await press('Other');
+    await act(async () => {
+      fireEvent.changeText(screen.getByLabelText('Other reason'), 'test drive');
+    });
+    await press('Pause job');
+    expect(mockPerform).toHaveBeenCalledWith(expect.anything(), 'pause', { reason: 'test drive' });
   });
 
   it('completing shows a summary, nudges for photos, and lands on Home with a confirmation', async () => {

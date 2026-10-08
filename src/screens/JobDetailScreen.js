@@ -37,6 +37,8 @@ const CUSTODY_LABEL = {
   handoff: 'Reassigned',
 };
 
+const OTHER_REASON = 'Other';
+
 const haptic = () => {
   if (Platform.OS !== 'web')
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
@@ -121,7 +123,10 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const confirmPause = async () => {
-    const updated = await act('pause', { reason: pauseReason, note: pauseNote });
+    // "Other" means the typed text IS the reason, so it reads naturally later
+    // ("Paused: test drive").
+    const reason = pauseReason === OTHER_REASON ? pauseNote.trim() : pauseReason;
+    const updated = await act('pause', { reason });
     if (updated) {
       setPauseOpen(false);
       setPauseReason('');
@@ -431,7 +436,7 @@ export default function JobDetailScreen({ route, navigation }) {
 
       <Sheet visible={pauseOpen} title="Why are you pausing?" onClose={() => setPauseOpen(false)}>
         <View style={styles.chips}>
-          {PAUSE_REASONS.map((reason) => {
+          {[...PAUSE_REASONS, OTHER_REASON].map((reason) => {
             const on = pauseReason === reason;
             return (
               <Pressable
@@ -446,15 +451,18 @@ export default function JobDetailScreen({ route, navigation }) {
             );
           })}
         </View>
-        <TextInput
-          style={styles.sheetInput}
-          value={pauseNote}
-          onChangeText={setPauseNote}
-          placeholder="Add detail (optional)"
-          placeholderTextColor={colors.placeholder}
-          maxLength={300}
-          accessibilityLabel="Pause detail"
-        />
+        {pauseReason === OTHER_REASON ? (
+          <TextInput
+            style={styles.sheetInput}
+            value={pauseNote}
+            onChangeText={setPauseNote}
+            placeholder="What's the reason?"
+            placeholderTextColor={colors.placeholder}
+            maxLength={60}
+            autoFocus
+            accessibilityLabel="Other reason"
+          />
+        ) : null}
         <Button
           title="Pause job"
           icon="pause"
