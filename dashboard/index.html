@@ -193,13 +193,6 @@
     .photo-modal-content img { max-width: 100%; max-height: 78vh; border-radius: 10px; }
     .photo-note { margin-top: 8px; color: #ddd; font-size: 14px; }
 
-    .page-footer { margin-top: 28px; text-align: center; }
-    .link-button {
-      background: none; border: 0; padding: 8px 12px; min-height: 44px; cursor: pointer;
-      color: var(--muted); font-size: 14px; text-decoration: underline;
-    }
-    .link-button:hover { color: var(--brand); }
-
     .team-table td .actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .muted { color: var(--muted); }
 
@@ -251,22 +244,6 @@
       <p class="muted" style="font-size:13px">Forgot the password? Contact Shinetime support to reset it.</p>
     </form>
 
-    <!-- The dealership shares one manager login; change it when someone leaves. -->
-    <form class="signin-card" id="passwordForm" hidden novalidate>
-      <h1>Change password</h1>
-      <p>This changes the manager login for everyone who uses it.</p>
-      <div class="field">
-        <label for="newPassword">New password (at least 8 characters)</label>
-        <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required>
-      </div>
-      <div class="field">
-        <label for="confirmPassword">Type it again</label>
-        <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required>
-      </div>
-      <div id="passwordError" class="error-box" role="alert" hidden></div>
-      <button class="btn primary" type="submit" id="passwordSubmit">Save password</button>
-      <button class="btn" type="button" onclick="closePasswordForm()">Cancel</button>
-    </form>
   </section>
 
   <div class="app" id="app" hidden>
@@ -392,10 +369,6 @@
         <div id="jobsContainer"></div>
       </section>
     </div>
-
-    <footer class="page-footer">
-      <button class="link-button" type="button" onclick="showPasswordForm()">Change your password</button>
-    </footer>
   </div>
 
   <div id="jobModal" class="modal" onclick="closeModal(event, 'jobModal')">
@@ -565,50 +538,9 @@
 
     // --- Auth + dealership -----------------------------------------------
 
-    function showPasswordForm() {
-      document.getElementById('app').hidden = true;
-      document.getElementById('signin').hidden = false;
-      document.getElementById('signinForm').hidden = true;
-      document.getElementById('passwordForm').hidden = false;
-      document.getElementById('passwordError').hidden = true;
-      document.getElementById('newPassword').value = '';
-      document.getElementById('confirmPassword').value = '';
-      document.getElementById('newPassword').focus();
-    }
-
-    function closePasswordForm() {
-      document.getElementById('passwordForm').hidden = true;
-      document.getElementById('signinForm').hidden = false;
-      document.getElementById('signin').hidden = true;
-      document.getElementById('app').hidden = false;
-    }
-
-    async function handlePasswordChange(event) {
-      event.preventDefault();
-      const next = document.getElementById('newPassword').value;
-      const again = document.getElementById('confirmPassword').value;
-      const err = document.getElementById('passwordError');
-      const fail = (msg) => { err.textContent = msg; err.hidden = false; };
-      if (next.length < 8) return fail('Use at least 8 characters.');
-      if (next !== again) return fail("The two passwords don't match.");
-      const button = document.getElementById('passwordSubmit');
-      button.disabled = true;
-      try {
-        const { error } = await supabaseClient.auth.updateUser({ password: next });
-        if (error) throw error;
-        closePasswordForm();
-      } catch (e) {
-        fail(e.message || 'Could not save the password.');
-      } finally {
-        button.disabled = false;
-      }
-    }
-
     function showSignIn(message) {
       document.getElementById('app').hidden = true;
       document.getElementById('signin').hidden = false;
-      document.getElementById('signinForm').hidden = false;
-      document.getElementById('passwordForm').hidden = true;
       const err = document.getElementById('signinError');
       err.textContent = message || '';
       err.hidden = !message;
@@ -1182,7 +1114,9 @@
                 <td>${p.isActive === false ? '<span class="muted">Turned off</span>' : 'Active'}</td>
                 <td>${p.lastActiveAt ? escapeHtml(formatWhen(p.lastActiveAt)) : '<span class="muted">—</span>'}</td>
                 <td><div class="actions">
-                  ${p.role === 'owner' || (currentUser && p.userId === currentUser.id) ? '' : `
+                  ${currentUser && p.userId === currentUser.id
+                    ? `<button class="btn small" type="button" onclick="startPasswordChange()">Change password</button>`
+                    : p.role === 'owner' ? '' : `
                     <button class="btn small" type="button" data-user="${escapeHtml(p.userId)}" onclick="startPinReset(this.dataset.user)">Reset PIN</button>
                     <button class="btn small ${p.isActive === false ? '' : 'danger'}" type="button" data-user="${escapeHtml(p.userId)}" data-active="${p.isActive === false ? 'true' : 'false'}" onclick="setActive(this.dataset.user, this.dataset.active === 'true')">${p.isActive === false ? 'Turn on' : 'Turn off'}</button>`}
                 </div></td>
@@ -1198,7 +1132,51 @@
             <button class="btn" type="button" onclick="toggleForm('pinForm')">Cancel</button>
             <button class="btn primary" type="submit">Set PIN</button>
           </div>
+        </form>
+        <form id="passwordForm" class="inline-form" hidden onsubmit="submitPasswordChange(event)">
+          <p class="muted" style="margin:0">This changes the manager login for everyone who uses it.</p>
+          <div class="field">
+            <label for="newPassword">New password (8+ characters)</label>
+            <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <div class="field">
+            <label for="confirmPassword">Type it again</label>
+            <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required>
+          </div>
+          <div class="actions">
+            <button class="btn" type="button" onclick="toggleForm('passwordForm')">Cancel</button>
+            <button class="btn primary" type="submit">Save password</button>
+          </div>
         </form>`;
+    }
+
+    // The dealership shares one manager login; change its password here, the
+    // same way detailer PINs are reset (e.g. when someone leaves).
+    function startPasswordChange() {
+      document.getElementById('pinForm').hidden = true;
+      document.getElementById('newPassword').value = '';
+      document.getElementById('confirmPassword').value = '';
+      document.getElementById('passwordForm').hidden = false;
+      document.getElementById('newPassword').focus();
+    }
+
+    async function submitPasswordChange(event) {
+      event.preventDefault();
+      const next = document.getElementById('newPassword').value;
+      const again = document.getElementById('confirmPassword').value;
+      if (next.length < 8) return showModalError('Use at least 8 characters.');
+      if (next !== again) return showModalError("The two passwords don't match.");
+      try {
+        const { error } = await supabaseClient.auth.updateUser({ password: next });
+        if (error) throw error;
+        document.getElementById('passwordForm').hidden = true;
+        const result = document.getElementById('inviteResult');
+        result.textContent = 'Manager password changed. Use the new one next time you sign in on any device.';
+        result.hidden = false;
+        showModalError('');
+      } catch (e) {
+        showModalError(e.message || 'Could not change the password.');
+      }
     }
 
     let pinTarget = null;
@@ -1292,7 +1270,6 @@
 
     async function initializeDashboardApp() {
       document.getElementById('signinForm').addEventListener('submit', handleSignIn);
-      document.getElementById('passwordForm').addEventListener('submit', handlePasswordChange);
       supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       try {
         const { data: { session } } = await supabaseClient.auth.getSession();

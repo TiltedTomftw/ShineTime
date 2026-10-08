@@ -522,23 +522,36 @@ test('dashboard: the Team page lists staff and resets a PIN', async () => {
   dom.window.close();
 });
 
-test('dashboard: the shared manager login can change its password', async () => {
-  const { doc, window, world, dom } = await mountDashboard([jobRow()]);
-  window.showPasswordForm();
-  assert.strictEqual(doc.getElementById('passwordForm').hidden, false);
+test('dashboard: the manager password is changed from the Team page, like a PIN reset', async () => {
+  const { doc, window, world, dom } = await mountDashboard([], {
+    employees: [
+      { userId: 'mgr', name: 'Ford Motors', role: 'owner', isActive: true },
+      { userId: 'u-ana', name: 'Ana', role: 'detailer', isActive: true },
+    ],
+  });
+  assert.ok(!doc.querySelector('.who').textContent.includes('Password'), 'no top-bar button');
+  await window.showTeam();
+  const rows = [...doc.querySelectorAll('.team-table tbody tr')];
+  const managerRow = rows.find((r) => r.textContent.includes('Ford Motors'));
+  const anaRow = rows.find((r) => r.textContent.includes('Ana'));
+  assert.ok(managerRow.textContent.includes('Change password'), 'on the manager login row');
+  assert.ok(anaRow.textContent.includes('Reset PIN'), 'detailers still get Reset PIN');
+  assert.ok(!anaRow.textContent.includes('Change password'));
+
+  window.startPasswordChange();
   doc.getElementById('newPassword').value = 'short';
   doc.getElementById('confirmPassword').value = 'short';
-  await window.handlePasswordChange({ preventDefault() {} });
+  await window.submitPasswordChange({ preventDefault() {} });
   assert.strictEqual(world.passwordUpdates.length, 0, 'too short is refused');
+
   doc.getElementById('newPassword').value = 'detail-shop-2026';
   doc.getElementById('confirmPassword').value = 'detail-shop-2026';
-  await window.handlePasswordChange({ preventDefault() {} });
+  await window.submitPasswordChange({ preventDefault() {} });
   assert.strictEqual(world.passwordUpdates.length, 1);
   assert.strictEqual(world.passwordUpdates[0].password, 'detail-shop-2026');
-  assert.strictEqual(doc.getElementById('app').hidden, false, 'back to the dashboard');
+  assert.ok(doc.getElementById('inviteResult').textContent.includes('password changed'));
   dom.window.close();
 });
-
 test('dashboard: invite codes are detailer-only (no manager codes)', async () => {
   const { doc, window, world, dom } = await mountDashboard([], { employees: [] });
   await window.showTeam();
