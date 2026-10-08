@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shinetime Detail Dashboard</title>
+  <title>Shinetime Manager Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -254,7 +254,7 @@
   <section id="signin" class="signin" hidden>
     <form class="signin-card" id="signinForm" novalidate>
       <h1>Shinetime</h1>
-      <p>Detail Dashboard · sign in with your dealership's manager login</p>
+      <p>Manager Dashboard · sign in with your dealership's manager login</p>
       <div class="field">
         <label for="signinEmail">Email</label>
         <input id="signinEmail" type="email" autocomplete="username" required>
@@ -273,7 +273,7 @@
   <div class="app" id="app" hidden>
     <header class="topbar">
       <div class="brand">
-        <div class="eyebrow"><span class="logo-mark" aria-hidden="true"></span>Shinetime · Detail Dashboard</div>
+        <div class="eyebrow"><span class="logo-mark" aria-hidden="true"></span>Shinetime · Manager Dashboard</div>
         <div class="brand-row">
           <h1 id="dealershipTitle">Shinetime</h1>
           <label class="muted" for="dealershipSwitch" id="dealershipSwitchLabel" hidden>Dealership</label>
@@ -657,7 +657,7 @@
       team = null;
       safeSet('dashboard_dealership_id', id);
       document.getElementById('dealershipTitle').textContent = m.name;
-      document.title = `${m.name} · Shinetime Detail Dashboard`;
+      document.title = `${m.name} · Shinetime Manager Dashboard`;
       await loadDashboard();
       clearInterval(refreshTimer);
       refreshTimer = setInterval(() => {
