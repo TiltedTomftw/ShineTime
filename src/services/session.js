@@ -11,8 +11,6 @@ export const clearSessionContext = () => setSessionContext({});
 
 export const getSessionContext = () => context;
 
-export const isManagerRole = (role) => ['manager', 'owner'].includes((role || '').toLowerCase());
-
 export const requireSessionContext = () => {
   if (!context.userId || !context.dealershipId) {
     throw new Error('Not signed in to a dealership.');

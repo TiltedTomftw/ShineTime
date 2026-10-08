@@ -158,12 +158,12 @@ describe('JobDetailScreen', () => {
     expect(screen.getByText('odor')).toBeTruthy();
   });
 
-  it('is view-only for managers', async () => {
+  it('lets a manager work their own car like anyone else', async () => {
     mockIsManager = true;
     await mount(baseJob());
-    expect(screen.queryByText('Pause')).toBeNull();
-    expect(screen.queryByText('Complete')).toBeNull();
-    expect(screen.getByText(/View only/)).toBeTruthy();
+    expect(screen.getByText('Pause')).toBeTruthy();
+    expect(screen.getByText('Complete')).toBeTruthy();
+    expect(screen.queryByText(/View only/)).toBeNull();
   });
 
   it('says so plainly when the job is gone', async () => {

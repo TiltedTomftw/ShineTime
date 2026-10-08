@@ -27,7 +27,7 @@ Shinetime/
 ├── src/
 │   ├── screens/               # Home, NewJob, JobDetail, History, Account,
 │   │                          # EmployeeAccess, Auth (manager), DealershipSelect,
-│   │                          # JoinByCode, ManageInviteCodes, Gate screens
+│   │                          # JoinByCode, Gate screens
 │   ├── navigation/            # React Navigation stack
 │   ├── context/AuthContext.js # Session, memberships, active dealership/role
 │   ├── services/              # jobs.js, outbox*.js, jobSync.js, jobLogic.js, ocr.js, timeMath.js

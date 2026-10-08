@@ -48,7 +48,7 @@ src/
 │   └── ocr.js                  # Calls the ocr-vehicle Edge Function
 ├── components/                 # ui.js (Button, Card, Field, StatusPill…), JobCard,
 │                               # OutboxBanner, Sheet, PhotoViewer, AuthLayout
-├── navigation/AppNavigator.js  # Home / NewJob / JobDetail / History / Invite / Account
+├── navigation/AppNavigator.js  # Home / NewJob / JobDetail / History / Account
 └── screens/
 supabase/
 ├── migrations/
@@ -73,7 +73,8 @@ __tests__/                      # node --test (pure) + jest (components) + integ
   optimistic-concurrency check on `client_updated_at`. Action ids make retries
   idempotent; action timestamps are when the detailer tapped.
 - **Reads**: `fetchOpenJobs`, `fetchJob`, `fetchHistory` (paged),
-  `fetchTodayStats`. Unsent outbox actions are overlaid so a detailer always sees
+  `fetchTodayStats` — always the signed-in person's own jobs. The app has no
+  manager mode; manager tools are only on the web dashboard. Unsent outbox actions are overlaid so a detailer always sees
   their latest taps. A small in-memory cache (never written to disk) keeps
   screens usable if the signal drops mid-shift.
 - **Photos**: resized to 1600px, kept in app storage until uploaded to the

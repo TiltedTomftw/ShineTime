@@ -23,7 +23,7 @@ import {
 } from './jobLogic';
 import { startOfDay } from './timeMath';
 import { outbox, flushOutbox } from './outbox';
-import { getSessionContext, requireSessionContext, isManagerRole } from './session';
+import { getSessionContext, requireSessionContext } from './session';
 
 const DEVICE_ID_KEY = '@detailtracker_device_id';
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
@@ -92,11 +92,12 @@ const LIST_COLUMNS =
 const mineFilter = (query, userId) =>
   query.or(`assigned_detailer_id.eq.${userId},payload->>operationalUserId.eq.${userId}`);
 
-// Open jobs (running, paused, sent back for rework). Detailers see their own;
-// managers see the whole dealership.
+// The app only ever shows the signed-in person's own cars, managers included:
+// every manager tool (oversight, rework, team) lives on the web dashboard.
+
+// My open jobs (running, paused, sent back for rework).
 export const fetchOpenJobs = async () => {
   const ctx = requireSessionContext();
-  const manager = isManagerRole(ctx.role);
   try {
     let query = supabase
       .from('jobs')
@@ -106,7 +107,7 @@ export const fetchOpenJobs = async () => {
       .in('status', OPEN_STATUSES)
       .order('created_at', { ascending: false })
       .limit(100);
-    if (!manager) query = mineFilter(query, ctx.userId);
+    query = mineFilter(query, ctx.userId);
     const { data, error } = await query;
     if (error) throw error;
     const jobs = (data || []).map(mapSupabaseJobToLegacyShape);
@@ -126,7 +127,7 @@ const overlayOpen = (jobs) => {
     .filter((j) => j && OPEN_STATUSES.includes(j.status));
 };
 
-// Today's completed cars: count, total and average active time.
+// My completed cars today: count, total and average active time.
 export const fetchTodayStats = async () => {
   const ctx = requireSessionContext();
   let query = supabase
@@ -136,7 +137,7 @@ export const fetchTodayStats = async () => {
     .is('deleted_at', null)
     .eq('status', 'completed')
     .gte('ended_at', new Date(startOfDay(Date.now())).toISOString());
-  if (!isManagerRole(ctx.role)) query = mineFilter(query, ctx.userId);
+  query = mineFilter(query, ctx.userId);
   const { data, error } = await query;
   if (error) throw error;
   const times = (data || []).map((r) => Number(r.total_active_ms) || 0);
@@ -162,7 +163,7 @@ export const fetchHistory = async ({ search = '', cursor = null, limit = 30 } = 
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(limit);
-  if (!isManagerRole(ctx.role)) query = mineFilter(query, ctx.userId);
+  query = mineFilter(query, ctx.userId);
   if (cursor) query = query.lt('created_at', cursor);
   const term = search.replace(/[^a-zA-Z0-9 -]/g, '').trim();
   if (term) {

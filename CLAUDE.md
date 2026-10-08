@@ -8,10 +8,12 @@ Expo / React Native app (SDK 54) backed by Supabase. Full architecture lives in
 This product ships **two independent front-ends**. Do NOT conflate them:
 
 1. **The mobile app** (this repo's `App.js` / `src/`) — the **detailer** tool.
-   Detailers start/pause/resume/complete jobs, add notes/photos, scan keytags
-   (OCR). A manager can sign in and see a *light* HomeScreen summary ("Recent
-   Jobs" panel), but **the app is not the management tool** — keep the manager
-   HomeScreen minimal.
+   Start/pause/resume/complete jobs, notes/photos, keytag scans (OCR). **It has
+   no manager mode** (decided Oct 2026): everyone, managers included, sees only
+   their own cars. Service managers work at a desk PC, so every manager feature
+   (oversight, rework, reassign, team/PINs, invite codes) lives ONLY on the web
+   dashboard. Don't add manager screens to the app; the Account screen just
+   points managers to the dashboard.
 
 2. **The manager dashboard** — a JIRA-style **standalone web app** that lives in
    THIS repo at **`dashboard/index.html`** (one self-contained static file;

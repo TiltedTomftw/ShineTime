@@ -5,6 +5,11 @@ import { outbox, flushOutbox } from '../services/outbox';
 import { Button, Card, Notice } from '../components/ui';
 import { colors, spacing, type } from '../theme';
 
+// Managers do their managing on the web dashboard (they work at a desk); the
+// app is the same "my cars" tool for everyone.
+const DASHBOARD_URL =
+  process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://tiltedtomftw.github.io/shinetime-dashboard/';
+
 const ROLE_LABEL = { manager: 'Manager', detailer: 'Detailer', sales: 'Sales' };
 
 // Who you are, where you're signed in, and sign-out — kept off the home screen
@@ -17,6 +22,7 @@ export default function AccountScreen() {
     memberships,
     signOut,
     switchDealership,
+    isManager,
   } = useAuth();
   const [pending, setPending] = React.useState(outbox.getState().pending);
   const [busy, setBusy] = React.useState(false);
@@ -58,6 +64,12 @@ export default function AccountScreen() {
           {`${ROLE_LABEL[activeOperationalRole] || activeOperationalRole} · ${activeDealership?.dealership?.name || ''}`}
         </Text>
       </Card>
+
+      {isManager ? (
+        <Notice tone="info">
+          {`Team, rework, reports and invite codes are on the web dashboard: ${DASHBOARD_URL.replace(/^https?:\/\//, '')}`}
+        </Notice>
+      ) : null}
 
       {pending > 0 ? (
         <Notice tone="warning" action="Send now" onAction={() => flushOutbox().catch(() => {})}>

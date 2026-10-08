@@ -115,11 +115,12 @@ describe('HomeScreen (detailer)', () => {
 });
 
 describe('HomeScreen (manager)', () => {
-  it('shows the shop floor with detailer names and a dashboard link', async () => {
+  it('gives managers the same my-cars home; manager tools live on the web dashboard', async () => {
     mockIsManager = true;
-    await mount([job('p1', 'in_progress', { detailerName: 'Ana' })]);
-    expect(screen.getByText('Shop floor')).toBeTruthy();
-    expect(screen.getByText('Open the web dashboard')).toBeTruthy();
-    expect(screen.getByText('Ana')).toBeTruthy();
+    await mount([job('p1', 'in_progress')]);
+    expect(screen.getByText("Mike's cars")).toBeTruthy();
+    expect(screen.getByText('Scan keytag')).toBeTruthy();
+    expect(screen.queryByText('Shop floor')).toBeNull();
+    expect(screen.queryByText(/Invite team/)).toBeNull();
   });
 });

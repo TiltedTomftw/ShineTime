@@ -16,7 +16,6 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
 import { alertMessage } from '../components/alerts';
 import { Button, Card, EmptyState, Notice, SectionLabel, StatusPill } from '../components/ui';
 import Sheet from '../components/Sheet';
@@ -45,7 +44,6 @@ const haptic = () => {
 
 export default function JobDetailScreen({ route, navigation }) {
   const { jobId } = route.params;
-  const { isManager } = useAuth();
   const headerHeight = useHeaderHeight();
   const [job, setJob] = React.useState(null);
   const [photos, setPhotos] = React.useState([]);
@@ -205,7 +203,6 @@ export default function JobDetailScreen({ route, navigation }) {
 
   const status = job.status;
   const elapsed = status === 'completed' ? job.totalActiveTime : computeLiveElapsed(job, now);
-  const canAct = !isManager;
   const reworkNote = ensureArray(job.custodyEvents)
     .filter((e) => e.type === 'rework')
     .pop();
@@ -274,11 +271,8 @@ export default function JobDetailScreen({ route, navigation }) {
             {`Completed ${formatWhen(job.endTime, now)} · ${formatDuration(job.totalActiveTime)} worked`}
           </Notice>
         ) : null}
-        {isManager && status !== 'completed' ? (
-          <Notice tone="info">View only. Reassign or reopen jobs from the web dashboard.</Notice>
-        ) : null}
 
-        {canAct && status !== 'completed' ? (
+        {status !== 'completed' ? (
           <View style={styles.actions}>
             {status === 'in_progress' ? (
               <Button
@@ -321,7 +315,7 @@ export default function JobDetailScreen({ route, navigation }) {
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.photos}
         >
-          {canAct && status !== 'completed' ? (
+          {status !== 'completed' ? (
             <Pressable
               onPress={takePhoto}
               disabled={photoBusy}
@@ -354,13 +348,13 @@ export default function JobDetailScreen({ route, navigation }) {
               ) : null}
             </Pressable>
           ))}
-          {photos.length === 0 && !(canAct && status !== 'completed') ? (
+          {photos.length === 0 && status === 'completed' ? (
             <Text style={styles.empty}>No photos.</Text>
           ) : null}
         </ScrollView>
 
         <SectionLabel>Notes</SectionLabel>
-        {canAct && status !== 'completed' ? (
+        {status !== 'completed' ? (
           <View style={styles.noteBox}>
             <TextInput
               style={styles.noteInput}

@@ -1,26 +1,15 @@
 import React from 'react';
-import {
-  Linking,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { alertMessage } from '../components/alerts';
 import JobCard from '../components/JobCard';
-import { Button, EmptyState, Notice, SectionLabel } from '../components/ui';
+import { EmptyState, Notice, SectionLabel } from '../components/ui';
 import { fetchOpenJobs, fetchTodayStats, performJobAction } from '../services/jobs';
 import { formatDuration } from '../services/timeMath';
 import { colors, radius, spacing, type, shadow } from '../theme';
-
-const DASHBOARD_URL =
-  process.env.EXPO_PUBLIC_DASHBOARD_URL || 'https://tiltedtomftw.github.io/shinetime-dashboard/';
 
 const initials = (name) =>
   (name || '?')
@@ -32,7 +21,7 @@ const initials = (name) =>
 
 export default function HomeScreen({ navigation, route }) {
   const insets = useSafeAreaInsets();
-  const { userName, activeDealership, isManager } = useAuth();
+  const { userName, activeDealership } = useAuth();
   const [jobs, setJobs] = React.useState([]);
   const [stats, setStats] = React.useState(null);
   const [offline, setOffline] = React.useState(false);
@@ -108,7 +97,7 @@ export default function HomeScreen({ navigation, route }) {
           {dealershipName}
         </Text>
         <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
-          {isManager ? 'Shop floor' : `${firstName}'s cars`}
+          {`${firstName}'s cars`}
         </Text>
       </View>
       <Pressable
@@ -138,73 +127,6 @@ export default function HomeScreen({ navigation, route }) {
       ) : null}
     </>
   );
-
-  if (isManager) {
-    const counts = {
-      running: jobs.filter((j) => j.status === 'in_progress').length,
-      paused: jobs.filter((j) => j.status === 'paused').length,
-      rework: rework.length,
-    };
-    return (
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxl }]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-      >
-        {header}
-        <View style={styles.gap}>{notices}</View>
-        <View style={styles.statsRow}>
-          <Stat label="Done today" value={stats ? stats.completed : '–'} />
-          <Stat label="Running" value={counts.running} color={colors.run} />
-          <Stat label="Paused" value={counts.paused} color={colors.pause} />
-          <Stat label="Rework" value={counts.rework} color={colors.rework} />
-        </View>
-        <Button
-          title="Open the web dashboard"
-          icon="open-outline"
-          onPress={() =>
-            Linking.openURL(`${DASHBOARD_URL}?d=${activeDealership?.dealershipId || ''}`)
-          }
-          style={styles.gapTop}
-          accessibilityHint="Full reports, team and PIN resets open in your browser"
-        />
-        <View style={styles.row}>
-          <Button
-            title="Invite team"
-            icon="person-add-outline"
-            variant="secondary"
-            onPress={() => navigation.navigate('ManageInviteCodes')}
-            style={styles.flex}
-          />
-          <Button
-            title="History"
-            icon="time-outline"
-            variant="secondary"
-            onPress={() => navigation.navigate('History')}
-            style={styles.flex}
-          />
-        </View>
-        <SectionLabel>{`Open jobs · ${jobs.length}`}</SectionLabel>
-        {loaded && jobs.length === 0 ? (
-          <EmptyState
-            icon="car-outline"
-            title="No open jobs"
-            body="Cars appear here as detailers start them."
-          />
-        ) : (
-          jobs.map((job) => (
-            <JobCard
-              key={job.jobId}
-              job={job}
-              now={now}
-              showDetailer
-              onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
-            />
-          ))
-        )}
-      </ScrollView>
-    );
-  }
 
   return (
     <ScrollView
@@ -284,22 +206,10 @@ export default function HomeScreen({ navigation, route }) {
   );
 }
 
-function Stat({ label, value, color = colors.text }) {
-  return (
-    <View style={styles.stat} accessibilityLabel={`${label}: ${value}`}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   content: { paddingHorizontal: spacing.lg },
-  flex: { flex: 1 },
   gap: { gap: spacing.sm, marginBottom: spacing.sm },
-  gapTop: { marginTop: spacing.lg },
-  row: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -343,15 +253,4 @@ const styles = StyleSheet.create({
   todayText: { ...type.subhead, flex: 1 },
   historyLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
   historyText: { color: colors.accent, fontSize: 16, fontWeight: '600' },
-  statsRow: { flexDirection: 'row', gap: spacing.sm },
-  stat: {
-    flex: 1,
-    backgroundColor: colors.card,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-    ...shadow.card,
-  },
-  statValue: { fontSize: 26, fontWeight: '700', fontVariant: ['tabular-nums'] },
-  statLabel: { ...type.footnote, marginTop: 2, textAlign: 'center' },
 });

@@ -8,7 +8,6 @@ import HomeScreen from '../screens/HomeScreen';
 import NewJobScreen from '../screens/NewJobScreen';
 import HistoryScreen from '../screens/HistoryScreen';
 import JobDetailScreen from '../screens/JobDetailScreen';
-import ManageInviteCodesScreen from '../screens/ManageInviteCodesScreen';
 import AccountScreen from '../screens/AccountScreen';
 import { colors } from '../theme';
 
@@ -51,11 +50,6 @@ export default function AppNavigator() {
             />
             <Stack.Screen name="JobDetail" component={JobDetailScreen} options={{ title: '' }} />
             <Stack.Screen name="History" component={HistoryScreen} options={{ title: 'History' }} />
-            <Stack.Screen
-              name="ManageInviteCodes"
-              component={ManageInviteCodesScreen}
-              options={{ title: 'Invite your team' }}
-            />
             <Stack.Screen name="Account" component={AccountScreen} options={{ title: 'Account' }} />
           </Stack.Navigator>
         </View>

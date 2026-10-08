@@ -10,7 +10,6 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
-import { useAuth } from '../context/AuthContext';
 import { EmptyState, Notice, StatusPill } from '../components/ui';
 import { vehicleDescription, vehicleTitle } from '../components/VehicleSummary';
 import { fetchHistory } from '../services/jobs';
@@ -20,7 +19,6 @@ import { colors, radius, spacing, type } from '../theme';
 // Past and current jobs, grouped by day, with stock/make/model search.
 // Pages from Supabase 30 at a time instead of loading everything.
 export default function HistoryScreen({ navigation }) {
-  const { isManager } = useAuth();
   const [jobs, setJobs] = React.useState([]);
   const [cursor, setCursor] = React.useState(null);
   const [search, setSearch] = React.useState('');
@@ -133,9 +131,7 @@ export default function HistoryScreen({ navigation }) {
                   {vehicleTitle(item)}
                 </Text>
                 <Text style={styles.desc} numberOfLines={1}>
-                  {[vehicleDescription(item), isManager ? item.detailerName : null]
-                    .filter(Boolean)
-                    .join(' · ') || ' '}
+                  {[vehicleDescription(item)].filter(Boolean).join(' · ') || ' '}
                 </Text>
               </View>
               <View style={styles.rowSide}>
