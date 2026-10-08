@@ -154,10 +154,10 @@ test('pause -> resume -> complete times use when the detailer TAPPED, not when i
 test('a pause reason and note land in Notes so they never disappear', () => {
   const job = applyJobAction(
     created(0),
-    act('pause', 1000, { reason: 'Waiting on parts', note: 'wiper blade' }),
+    act('pause', 1000, { reason: 'Taken by sales', note: 'test drive' }),
   );
-  assert.strictEqual(job.notes[0].text, 'Paused: Waiting on parts — wiper blade');
-  assert.strictEqual(job.pauseEvents[0].reason, 'Waiting on parts');
+  assert.strictEqual(job.notes[0].text, 'Paused: Taken by sales — test drive');
+  assert.strictEqual(job.pauseEvents[0].reason, 'Taken by sales');
 });
 
 test('completing a paused job folds in the final pause', () => {
