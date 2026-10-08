@@ -18,7 +18,7 @@
 // app builds).
 //
 // Manager-gated actions (caller must be owner/manager of the named dealership):
-//   list_employees, reset_pin, set_active.
+//   list_employees, reset_pin, remove_employee.
 //
 // Deploy:
 //   npx supabase functions deploy employee-access --project-ref <ref>
@@ -39,7 +39,7 @@ const json = (status: number, body: Record<string, unknown>) =>
   });
 
 type AccessRequest = {
-  action?: "enrol" | "list_employees" | "reset_pin" | "set_active";
+  action?: "enrol" | "list_employees" | "reset_pin" | "remove_employee";
   mode?: "join" | "signin";
   confirmNew?: boolean;
   code?: string;
@@ -49,7 +49,6 @@ type AccessRequest = {
   dealershipId?: string;
   employeeUserId?: string;
   newPin?: string;
-  active?: boolean;
 };
 
 // Mirrors public.slugify() from migration 004.
@@ -133,11 +132,11 @@ Deno.serve(async (req) => {
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
   const action = body.action || "enrol";
 
-  // --- Manager-gated: team list, PIN reset, deactivate/reactivate ----------
+  // --- Manager-gated: team list, PIN reset, remove a detailer ---------------
   // An employee's password is DERIVED from their PIN, so a forgotten PIN can
   // only be recovered here. Resetting keeps their existing user id, which keeps
   // their job history attached to them.
-  if (action === "list_employees" || action === "reset_pin" || action === "set_active") {
+  if (action === "list_employees" || action === "reset_pin" || action === "remove_employee") {
     const dealershipId = (body.dealershipId || "").trim();
     const guard = await requireManager(req, admin, supabaseUrl, anonKey, dealershipId);
     if (guard.error) return guard.error;
@@ -189,20 +188,38 @@ Deno.serve(async (req) => {
       return json(403, { error: "That employee is not on your team." });
     }
 
-    if (action === "set_active") {
+    // Remove a detailer's login. Their jobs are untouched (rows keep their ids
+    // and every job shows the detailer's name from its own record), but the
+    // person leaves the team and can never sign in again. The account is
+    // banned and its sign-in address retired rather than deleted, because job
+    // rows reference the user id and completed jobs are locked against edits.
+    if (action === "remove_employee") {
       if (employeeUserId === guard.caller!.id) {
-        return json(400, { error: "You can't deactivate yourself." });
+        return json(400, { error: "You can't remove the login you're using." });
       }
-      if (target.role === "owner") {
-        return json(400, { error: "The owner can't be deactivated here." });
+      if (target.role === "owner" || target.role === "manager") {
+        return json(400, { error: "The manager login can't be removed here." });
       }
-      const { error: updateError } = await admin
+      const { data: targetUser } = await admin.auth.admin.getUserById(employeeUserId);
+      const { error: memberError } = await admin
         .from("dealership_memberships")
-        .update({ is_active: body.active !== false })
+        .delete()
         .eq("dealership_id", dealershipId)
         .eq("user_id", employeeUserId);
-      if (updateError) return json(500, { error: "Could not update that employee." });
-      return json(200, { ok: true, employeeUserId, isActive: body.active !== false });
+      if (memberError) return json(500, { error: "Could not remove that person. Try again." });
+      if (targetUser?.user) {
+        // Free the name: the next "Alex" who joins gets a fresh account.
+        const { error: retireError } = await admin.auth.admin.updateUserById(employeeUserId, {
+          email: `removed-${employeeUserId}@removed.shinetime.invalid`,
+          ban_duration: "876000h",
+          user_metadata: {
+            ...(targetUser.user.user_metadata || {}),
+            removed_at: new Date().toISOString(),
+          },
+        });
+        if (retireError) console.error("employee-access: retire failed:", retireError.message);
+      }
+      return json(200, { ok: true, employeeUserId });
     }
 
     // reset_pin

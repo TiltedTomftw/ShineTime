@@ -557,3 +557,25 @@ test('dashboard: the owner account is shown as "Manager"', async () => {
   assert.ok(!/owner/i.test(row.querySelector('td:nth-child(2)').textContent));
   dom.window.close();
 });
+
+test('dashboard: a detailer login can be removed (no "turn off")', async () => {
+  const { doc, window, world, dom } = await mountDashboard([], {
+    employees: [
+      { userId: 'mgr', name: 'Ford Motors Manager', role: 'owner', isActive: true },
+      { userId: 'u-alex', name: 'Alex', role: 'detailer', isActive: true },
+    ],
+  });
+  await window.showTeam();
+  const body = doc.getElementById('modalBody');
+  assert.ok(!/Turn off|Turn on/.test(body.textContent));
+  const managerRow = [...body.querySelectorAll('tbody tr')].find((r) =>
+    r.textContent.includes('Manager'),
+  );
+  assert.ok(!managerRow.textContent.includes('Remove'), 'the manager login cannot be removed');
+
+  await window.removeEmployee('u-alex');
+  const call = world.invokes.find((b) => b.action === 'remove_employee');
+  assert.strictEqual(call.employeeUserId, 'u-alex');
+  assert.strictEqual(call.dealershipId, DEALERSHIP);
+  dom.window.close();
+});

@@ -1118,14 +1118,14 @@
               <tr>
                 <td><b>${escapeHtml(p.name)}</b></td>
                 <td>${escapeHtml(roleLabel(p.role))}</td>
-                <td>${p.isActive === false ? '<span class="muted">Turned off</span>' : 'Active'}</td>
+                <td>${p.isActive === false ? '<span class="muted">Can\'t sign in</span>' : 'Active'}</td>
                 <td>${p.lastActiveAt ? escapeHtml(formatWhen(p.lastActiveAt)) : '<span class="muted">—</span>'}</td>
                 <td><div class="actions">
                   ${currentUser && p.userId === currentUser.id
                     ? `<button class="btn small" type="button" onclick="startPasswordChange()">Change password</button>`
                     : p.role === 'owner' ? '' : `
                     <button class="btn small" type="button" data-user="${escapeHtml(p.userId)}" onclick="startPinReset(this.dataset.user)">Reset PIN</button>
-                    <button class="btn small ${p.isActive === false ? '' : 'danger'}" type="button" data-user="${escapeHtml(p.userId)}" data-active="${p.isActive === false ? 'true' : 'false'}" onclick="setActive(this.dataset.user, this.dataset.active === 'true')">${p.isActive === false ? 'Turn on' : 'Turn off'}</button>`}
+                    <button class="btn small danger" type="button" data-user="${escapeHtml(p.userId)}" onclick="removeEmployee(this.dataset.user)">Remove</button>`}
                 </div></td>
               </tr>`).join('')}</tbody>
           </table>
@@ -1212,13 +1212,17 @@
       }
     }
 
-    async function setActive(userId, active) {
+    // Remove a detailer's login. Their jobs (and their name on them) are kept.
+    async function removeEmployee(userId) {
       const person = (team || []).find((p) => p.userId === userId);
       if (!person) return;
-      if (!active && !confirm(`Turn off ${person.name}? They won't be able to sign in. Their jobs stay.`)) return;
+      if (!confirm(`Remove ${person.name}? They won't be able to sign in anymore. All of their jobs are kept.`)) return;
       try {
-        await callEmployeeAccess({ action: 'set_active', employeeUserId: userId, active });
+        await callEmployeeAccess({ action: 'remove_employee', employeeUserId: userId });
         renderTeam(await loadTeam(true));
+        const result = document.getElementById('inviteResult');
+        result.textContent = `${person.name} was removed. Their jobs are still in the history.`;
+        result.hidden = false;
       } catch (e) {
         showModalError(e.message);
       }

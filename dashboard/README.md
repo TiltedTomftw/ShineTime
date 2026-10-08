@@ -23,7 +23,7 @@ Features:
 - **Reopen for Rework** with a note the detailer sees; the clock holds from the
   original completion time.
 - **Reassign** to someone from the team.
-- **Team**: staff list with last activity, **Reset PIN**, turn people off/on,
+- **Team**: staff list with last activity, **Reset PIN**, **Remove** a login (their jobs are kept),
   and new invite codes. These call the `employee-access` Edge Function.
 
 ## Deploy

@@ -30,7 +30,7 @@ This product ships **two independent front-ends**. Do NOT conflate them:
      SEARCH filters (detailer + search filter client-side), Cards + Table,
      stat tiles, Top Detailers, Longest Open Jobs, Reopen for Rework
      (with a note), Reassign from the team, a **Team** page (detailer PIN reset,
-     turn off/on, detailer invite codes) via the `employee-access` function, and a
+     Remove (login gone, jobs kept), detailer invite codes) via the `employee-access` function, and a
      Password button. **Each dealership has ONE shared manager login** (no manager
      invites); it works on PC and phone. Photos are
      signed fresh from `job_photos` (never from payload URLs).
@@ -87,7 +87,7 @@ CI (`.github/workflows/ci.yml`) runs lint → format:check → tests on every pu
 - `src/services/ocr.js` — calls the `ocr-vehicle` Edge Function.
 - `supabase/functions/employee-access` — employee join/sign-in (modes `join` /
   `signin`; returning staff can use expired codes) + manager actions
-  `list_employees`, `reset_pin`, `set_active`. **Changes need
+  `list_employees`, `reset_pin`, `remove_employee`. **Changes need
   `npx supabase functions deploy employee-access`.**
 - UI: `src/theme.js` tokens + `src/components/ui.js` (Button, Card, Field,
   StatusPill, Notice…). Use these; don't hardcode colours.

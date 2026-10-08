@@ -921,6 +921,71 @@ test('pin reset: a forgotten PIN can be recovered WITHOUT losing identity', asyn
   );
 });
 
+test('remove: a removed detailer cannot sign in, keeps their jobs, and frees their name', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
+  const name = `Leaver ${RUN}`;
+  const before = await enrolViaFunction(code, name, '1234');
+  assert.ok(before.userId, 'enrolled');
+  const { id: jobRowId } = await seedJob(world.alpha.id, {
+    stockNumber: `${RUN}-LEAVE`,
+    detailerName: name,
+  });
+  await svc(`jobs?id=eq.${jobRowId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assigned_detailer_id: before.userId }),
+  });
+
+  const removed = await callEmployeeAccessAs(world.alpha.managerToken, {
+    action: 'remove_employee',
+    dealershipId: world.alpha.id,
+    employeeUserId: before.userId,
+  });
+  assert.strictEqual(removed.status, 200, JSON.stringify(removed.body));
+
+  const signIn = await callEmployeeAccess({ code, name, pin: '1234', mode: 'signin' });
+  assert.ok(signIn.status >= 400 && !signIn.body?.access_token, 'removed login cannot sign in');
+
+  const { body: jobs } = await svc(`jobs?id=eq.${jobRowId}&select=id,payload`);
+  assert.strictEqual(jobs.length, 1, 'their job is kept');
+  assert.strictEqual(jobs[0].payload.detailerName, name, 'still shows their name');
+
+  const { body: team } = await svc(
+    `dealership_memberships?dealership_id=eq.${world.alpha.id}&user_id=eq.${before.userId}`,
+  );
+  assert.strictEqual(team.length, 0, 'off the team');
+
+  const rejoin = await callEmployeeAccess({
+    code,
+    name,
+    pin: '9999',
+    mode: 'join',
+    confirmNew: true,
+  });
+  assert.strictEqual(rejoin.status, 200, `the name is free again: ${JSON.stringify(rejoin.body)}`);
+  const newId = await userIdFromToken(rejoin.body.access_token);
+  world.users.push(newId);
+  assert.notStrictEqual(newId, before.userId, 'a brand-new person, not the removed one');
+});
+
+test('remove: a detailer cannot remove anyone, and the manager login cannot be removed', async (t) => {
+  if (!(await fnDeployed())) return t.skip('function not deployed');
+  const asDetailer = await callEmployeeAccessAs(world.alpha.detailerToken, {
+    action: 'remove_employee',
+    dealershipId: world.alpha.id,
+    employeeUserId: world.alpha.detailerId,
+  });
+  assert.strictEqual(asDetailer.status, 403);
+  const { body: owner } = await svc(
+    `dealership_memberships?dealership_id=eq.${world.alpha.id}&role=eq.owner&select=user_id`,
+  );
+  const self = await callEmployeeAccessAs(world.alpha.managerToken, {
+    action: 'remove_employee',
+    dealershipId: world.alpha.id,
+    employeeUserId: owner[0].user_id,
+  });
+  assert.strictEqual(self.status, 400);
+});
 test('pin reset: a DETAILER cannot reset PINs or list the team', async (t) => {
   if (!(await fnDeployed())) return t.skip('function not deployed');
   const code = await mintCode(world.alpha.managerToken, world.alpha.id, { maxUses: 10 });
