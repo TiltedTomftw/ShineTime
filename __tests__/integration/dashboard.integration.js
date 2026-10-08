@@ -546,3 +546,14 @@ test('dashboard: invite codes are detailer-only (no manager codes)', async () =>
   assert.strictEqual(world.rpcs[0].args.p_role, 'detailer');
   dom.window.close();
 });
+
+test('dashboard: the owner account is shown as "Manager"', async () => {
+  const { doc, window, dom } = await mountDashboard([], {
+    employees: [{ userId: 'mgr', name: 'Ford Motors Manager', role: 'owner', isActive: true }],
+  });
+  await window.showTeam();
+  const row = doc.querySelector('.team-table tbody tr');
+  assert.ok(row.textContent.includes('Manager'));
+  assert.ok(!/owner/i.test(row.querySelector('td:nth-child(2)').textContent));
+  dom.window.close();
+});

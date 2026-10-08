@@ -401,6 +401,9 @@
     const SUPABASE_KEY = 'sb_publishable_lLIClIUyRA0J6dOHknPLLg_h1L84IPt';
     const REFRESH_MS = 30000;
     const OPEN_STATUSES = ['in_progress', 'paused', 'needs_rework'];
+    // The account that owns a dealership is just its manager login to the people using it.
+    const ROLE_LABEL = { owner: 'Manager', manager: 'Manager', detailer: 'Detailer', sales: 'Sales' };
+    const roleLabel = (role) => ROLE_LABEL[role] || role;
     const STATUS_LABEL = {
       in_progress: 'Running',
       paused: 'Paused',
@@ -1048,7 +1051,7 @@
       try {
         const people = (await loadTeam()).filter((p) => p.isActive !== false);
         select.innerHTML = '<option value="">Choose a person</option>' + people
-          .map((p) => `<option value="${escapeHtml(p.userId)}">${escapeHtml(p.name)} (${escapeHtml(p.role)})</option>`).join('');
+          .map((p) => `<option value="${escapeHtml(p.userId)}">${escapeHtml(p.name)} (${escapeHtml(roleLabel(p.role))})</option>`).join('');
       } catch (e) {
         select.innerHTML = '<option value="">Couldn\'t load the team</option>';
         showModalError(e.message);
@@ -1114,7 +1117,7 @@
             <tbody>${people.map((p) => `
               <tr>
                 <td><b>${escapeHtml(p.name)}</b></td>
-                <td>${escapeHtml(p.role)}</td>
+                <td>${escapeHtml(roleLabel(p.role))}</td>
                 <td>${p.isActive === false ? '<span class="muted">Turned off</span>' : 'Active'}</td>
                 <td>${p.lastActiveAt ? escapeHtml(formatWhen(p.lastActiveAt)) : '<span class="muted">—</span>'}</td>
                 <td><div class="actions">
