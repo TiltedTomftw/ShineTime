@@ -158,6 +158,7 @@ test('a pause reason and note land in Notes so they never disappear', () => {
   );
   assert.strictEqual(job.notes[0].text, 'Paused: Taken by sales — test drive');
   assert.strictEqual(job.pauseEvents[0].reason, 'Taken by sales');
+  assert.strictEqual(job.pauseEvents[0].label, 'Taken by sales — test drive');
 });
 
 test('completing a paused job folds in the final pause', () => {

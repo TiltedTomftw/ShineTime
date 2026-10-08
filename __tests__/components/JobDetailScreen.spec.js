@@ -107,6 +107,31 @@ describe('JobDetailScreen', () => {
     expect(screen.getByText('Paused')).toBeTruthy();
   });
 
+  it('"Taken by sales" offers an optional name that rides along with the reason', async () => {
+    await mount(baseJob());
+    await press('Pause');
+    await press('Taken by sales');
+    await act(async () => {
+      fireEvent.changeText(screen.getByLabelText("Salesperson's name"), 'Mike');
+    });
+    await press('Pause job');
+    expect(mockPerform).toHaveBeenCalledWith(expect.anything(), 'pause', {
+      reason: 'Taken by sales',
+      note: 'Mike',
+    });
+  });
+
+  it('a "Taken by" name is optional', async () => {
+    await mount(baseJob());
+    await press('Pause');
+    await press('Taken by a tech');
+    expect(screen.getByLabelText("Tech's name")).toBeTruthy();
+    await press('Pause job');
+    expect(mockPerform).toHaveBeenCalledWith(expect.anything(), 'pause', {
+      reason: 'Taken by a tech',
+    });
+  });
+
   it('"Other" reveals a box and the typed text becomes the reason', async () => {
     await mount(baseJob());
     await press('Pause');

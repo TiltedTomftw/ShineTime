@@ -38,6 +38,11 @@ const CUSTODY_LABEL = {
 };
 
 const OTHER_REASON = 'Other';
+// Reasons where it helps to note who took the car (optional).
+const WHO_TOOK_IT = {
+  'Taken by sales': "Salesperson's name",
+  'Taken by a tech': "Tech's name",
+};
 
 const haptic = () => {
   if (Platform.OS !== 'web')
@@ -123,10 +128,16 @@ export default function JobDetailScreen({ route, navigation }) {
   };
 
   const confirmPause = async () => {
-    // "Other" means the typed text IS the reason, so it reads naturally later
-    // ("Paused: test drive").
-    const reason = pauseReason === OTHER_REASON ? pauseNote.trim() : pauseReason;
-    const updated = await act('pause', { reason });
+    // "Other": the typed text IS the reason ("Paused: test drive").
+    // "Taken by…": the optional name rides along ("Taken by sales — Mike").
+    const typed = pauseNote.trim();
+    const data =
+      pauseReason === OTHER_REASON
+        ? { reason: typed }
+        : WHO_TOOK_IT[pauseReason] && typed
+          ? { reason: pauseReason, note: typed }
+          : { reason: pauseReason };
+    const updated = await act('pause', data);
     if (updated) {
       setPauseOpen(false);
       setPauseReason('');
@@ -261,7 +272,9 @@ export default function JobDetailScreen({ route, navigation }) {
 
         {status === 'paused' && lastPause ? (
           <Notice tone="warning">
-            {`Paused ${formatWhen(lastPause.timestamp, now)}${lastPause.reason ? ` · ${lastPause.reason}` : ''}`}
+            {`Paused ${formatWhen(lastPause.timestamp, now)}${
+              lastPause.label || lastPause.reason ? ` · ${lastPause.label || lastPause.reason}` : ''
+            }`}
           </Notice>
         ) : null}
         {status === 'needs_rework' ? (
@@ -441,7 +454,10 @@ export default function JobDetailScreen({ route, navigation }) {
             return (
               <Pressable
                 key={reason}
-                onPress={() => setPauseReason(on ? '' : reason)}
+                onPress={() => {
+                  setPauseReason(on ? '' : reason);
+                  setPauseNote('');
+                }}
                 accessibilityRole="radio"
                 accessibilityState={{ selected: on }}
                 style={[styles.chip, on && styles.chipOn]}
@@ -461,6 +477,17 @@ export default function JobDetailScreen({ route, navigation }) {
             maxLength={60}
             autoFocus
             accessibilityLabel="Other reason"
+          />
+        ) : WHO_TOOK_IT[pauseReason] ? (
+          <TextInput
+            style={styles.sheetInput}
+            value={pauseNote}
+            onChangeText={setPauseNote}
+            placeholder={`${WHO_TOOK_IT[pauseReason]} (optional)`}
+            placeholderTextColor={colors.placeholder}
+            maxLength={40}
+            autoCapitalize="words"
+            accessibilityLabel={WHO_TOOK_IT[pauseReason]}
           />
         ) : null}
         <Button

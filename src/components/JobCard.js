@@ -21,7 +21,7 @@ const holdReason = (job) => {
     const pause = ensureArray(job.pauseEvents)
       .filter((e) => e.type === 'pause')
       .pop();
-    const why = pause?.reason || 'Paused';
+    const why = pause?.label || pause?.reason || 'Paused';
     return pause?.timestamp ? `${why} · since ${formatWhen(pause.timestamp)}` : why;
   }
   return null;

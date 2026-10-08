@@ -226,9 +226,16 @@ const applyJobAction = (job, action) => {
       const reason = sanitizeInput(data.reason || '', 60);
       const note = sanitizeInput(data.note || '', 500);
       bankDetailerTime(next, at);
-      next.pauseEvents.push({ type: 'pause', timestamp: at, detailerName: actorName, reason });
-      next.status = 'paused';
       const text = [reason, note].filter(Boolean).join(' — ');
+      // `label` is what screens show for this pause (e.g. "Taken by sales — Mike").
+      next.pauseEvents.push({
+        type: 'pause',
+        timestamp: at,
+        detailerName: actorName,
+        reason,
+        label: text,
+      });
+      next.status = 'paused';
       if (text) {
         next.notes.unshift({ timestamp: at, detailerName: actorName, text: `Paused: ${text}` });
         next.latestNote = text;
