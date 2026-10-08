@@ -125,15 +125,9 @@ class JobActionError extends Error {
 }
 
 const MAX_APPLIED_IDS = 200;
-// What actually interrupts a detail at a dealership: breaks, shift end, a sold
-// unit that has to jump the line, or sales/service pulling the car mid-detail.
-const PAUSE_REASONS = [
-  'Lunch / break',
-  'End of shift',
-  'Sold unit',
-  'Taken by sales',
-  'Taken by a tech',
-];
+// What usually interrupts a detail at a dealership: breaks, shift end, or
+// sales/service pulling the car mid-detail. Anything else goes under Other.
+const PAUSE_REASONS = ['Lunch / break', 'End of shift', 'Taken by sales', 'Taken by a tech'];
 
 const clone = (job) => JSON.parse(JSON.stringify(job));
 
