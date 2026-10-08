@@ -130,7 +130,7 @@ const MAX_APPLIED_IDS = 200;
 const PAUSE_REASONS = [
   'Lunch / break',
   'End of shift',
-  'Sold unit came in',
+  'Sold unit',
   'Taken by sales',
   'Taken by a tech',
 ];

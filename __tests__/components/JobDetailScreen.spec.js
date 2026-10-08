@@ -99,10 +99,10 @@ describe('JobDetailScreen', () => {
     await mount(baseJob());
     await press('Pause');
     expect(screen.getByText('Why are you pausing?')).toBeTruthy();
-    await press('Sold unit came in');
+    await press('Sold unit');
     await press('Pause job');
     expect(mockPerform).toHaveBeenCalledWith(expect.objectContaining({ jobId: 'job_1' }), 'pause', {
-      reason: 'Sold unit came in',
+      reason: 'Sold unit',
     });
     expect(screen.getByText('Paused')).toBeTruthy();
   });
