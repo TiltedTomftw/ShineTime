@@ -843,14 +843,13 @@ test('employee-access: an enrolled employee cannot read another tenant', async (
   assert.deepStrictEqual(body, [], 'RLS still isolates tenants after invite onboarding');
 });
 
-test('employee-access: a manager-role code grants manager access', async (t) => {
+test('employee-access: a manager-role code is refused (the app is detailer-only)', async (t) => {
   if (!(await fnDeployed())) return t.skip('function not deployed');
   const code = await mintCode(world.alpha.managerToken, world.alpha.id, { role: 'manager' });
   const res = await callEmployeeAccess({ code, name: `Uma ${RUN}`, pin: '1234' });
-  assert.strictEqual(res.status, 200);
-  const userId = await userIdFromToken(res.body.access_token);
-  const { body } = await svc(`dealership_memberships?user_id=eq.${userId}&select=role`);
-  assert.strictEqual(body[0]?.role, 'manager', 'the code role is honoured');
+  assert.strictEqual(res.status, 400);
+  assert.match(res.body.error, /manager code/);
+  assert.ok(!res.body.access_token, 'no session for a manager code');
 });
 
 test('employee-access: rejects a too-short PIN and a blank name', async (t) => {
