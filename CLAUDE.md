@@ -29,8 +29,10 @@ This product ships **two independent front-ends**. Do NOT conflate them:
    - **Features:** DATE (default Today) / STATUS (incl. Rework) / DETAILER /
      SEARCH filters (detailer + search filter client-side), Cards + Table,
      stat tiles, Top Detailers, Longest Open Jobs, Coverage, Reopen for Rework
-     (with a note), Reassign from the team, and a **Team** page (PIN reset,
-     turn off/on, invite codes) via the `employee-access` function. Photos are
+     (with a note), Reassign from the team, a **Team** page (detailer PIN reset,
+     turn off/on, detailer invite codes) via the `employee-access` function, and a
+     Password button. **Each dealership has ONE shared manager login** (no manager
+     invites); it works on PC and phone. Photos are
      signed fresh from `job_photos` (never from payload URLs).
    - (Superseded copies to ignore: `server/public/manager.html` on branch
      `feature/supabase-remote-sync`, and the `supabase/functions/manager-dashboard`

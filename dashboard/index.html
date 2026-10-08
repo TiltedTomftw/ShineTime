@@ -196,10 +196,33 @@
     .team-table td .actions { display: flex; gap: 6px; flex-wrap: wrap; }
     .muted { color: var(--muted); }
 
+    /* Phones: management checks in from the floor too. */
     @media (max-width: 640px) {
-      .app { padding: 14px 16px 40px; }
+      body { font-size: 16px; }
+      .app { padding: 12px 16px 40px; }
+      .topbar { gap: 8px; }
       .brand h1 { font-size: 22px; }
-      .panel { padding: 16px; }
+      #whoEmail { display: none; }
+      .who { width: 100%; }
+      .who .btn { flex: 1; min-height: 44px; }
+      .panel { padding: 14px; border-radius: 14px; margin-top: 12px; }
+      .stats-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .stat-card { padding: 10px 12px; }
+      .stat-card:last-child { grid-column: 1 / -1; }
+      .stat-value { font-size: 24px; }
+      .stat-meta { display: none; }
+      .insights { grid-template-columns: 1fr; }
+      .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      .filters .field:nth-child(n + 3) { grid-column: 1 / -1; }
+      .field input, .field select { min-height: 44px; font-size: 16px; } /* 16px stops iOS zooming */
+      .jobs-grid { grid-template-columns: 1fr; }
+      .row-button { min-height: 44px; }
+      .modal { padding: 0; align-items: flex-end; }
+      .modal-content { max-height: 92vh; border-radius: 18px 18px 0 0; padding: 18px 16px 28px; }
+      .modal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .manager-actions .btn { flex: 1; min-height: 44px; }
+      .team-table th:nth-child(4), .team-table td:nth-child(4) { display: none; }
+      .signin-card { padding: 22px; }
     }
   </style>
 </head>
@@ -218,6 +241,24 @@
       </div>
       <div id="signinError" class="error-box" role="alert" hidden></div>
       <button class="btn primary" type="submit" id="signinSubmit">Sign in</button>
+      <p class="muted" style="font-size:13px">Forgot the password? Contact Shinetime support to reset it.</p>
+    </form>
+
+    <!-- The dealership shares one manager login; change it when someone leaves. -->
+    <form class="signin-card" id="passwordForm" hidden novalidate>
+      <h1>Change password</h1>
+      <p>This changes the manager login for everyone who uses it.</p>
+      <div class="field">
+        <label for="newPassword">New password (at least 8 characters)</label>
+        <input id="newPassword" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div class="field">
+        <label for="confirmPassword">Type it again</label>
+        <input id="confirmPassword" type="password" autocomplete="new-password" minlength="8" required>
+      </div>
+      <div id="passwordError" class="error-box" role="alert" hidden></div>
+      <button class="btn primary" type="submit" id="passwordSubmit">Save password</button>
+      <button class="btn" type="button" onclick="closePasswordForm()">Cancel</button>
     </form>
   </section>
 
@@ -231,6 +272,7 @@
       <div class="who">
         <span id="whoEmail"></span>
         <button class="btn" type="button" onclick="showTeam()">Team</button>
+        <button class="btn" type="button" onclick="showPasswordForm()">Password</button>
         <button class="btn" type="button" onclick="signOutDashboard()">Sign out</button>
       </div>
     </header>
@@ -513,9 +555,50 @@
 
     // --- Auth + dealership -----------------------------------------------
 
+    function showPasswordForm() {
+      document.getElementById('app').hidden = true;
+      document.getElementById('signin').hidden = false;
+      document.getElementById('signinForm').hidden = true;
+      document.getElementById('passwordForm').hidden = false;
+      document.getElementById('passwordError').hidden = true;
+      document.getElementById('newPassword').value = '';
+      document.getElementById('confirmPassword').value = '';
+      document.getElementById('newPassword').focus();
+    }
+
+    function closePasswordForm() {
+      document.getElementById('passwordForm').hidden = true;
+      document.getElementById('signinForm').hidden = false;
+      document.getElementById('signin').hidden = true;
+      document.getElementById('app').hidden = false;
+    }
+
+    async function handlePasswordChange(event) {
+      event.preventDefault();
+      const next = document.getElementById('newPassword').value;
+      const again = document.getElementById('confirmPassword').value;
+      const err = document.getElementById('passwordError');
+      const fail = (msg) => { err.textContent = msg; err.hidden = false; };
+      if (next.length < 8) return fail('Use at least 8 characters.');
+      if (next !== again) return fail("The two passwords don't match.");
+      const button = document.getElementById('passwordSubmit');
+      button.disabled = true;
+      try {
+        const { error } = await supabaseClient.auth.updateUser({ password: next });
+        if (error) throw error;
+        closePasswordForm();
+      } catch (e) {
+        fail(e.message || 'Could not save the password.');
+      } finally {
+        button.disabled = false;
+      }
+    }
+
     function showSignIn(message) {
       document.getElementById('app').hidden = true;
       document.getElementById('signin').hidden = false;
+      document.getElementById('signinForm').hidden = false;
+      document.getElementById('passwordForm').hidden = true;
       const err = document.getElementById('signinError');
       err.textContent = message || '';
       err.hidden = !message;
@@ -1073,10 +1156,9 @@
       const body = document.getElementById('modalBody');
       body.innerHTML = `
         <h2 id="modalTitle">Team</h2>
-        <p class="modal-sub">Employees sign in with an invite code, their name and their PIN. If someone forgets their PIN, set a new one here. Their job history stays with them.</p>
+        <p class="modal-sub">Detailers sign in to the phone app with an invite code, their name and their PIN. If someone forgets their PIN, set a new one here. Their job history stays with them.</p>
         <div class="manager-actions">
-          <button class="btn primary" type="button" onclick="makeInvite('detailer')">New detailer code</button>
-          <button class="btn" type="button" onclick="makeInvite('manager')">New manager code</button>
+          <button class="btn primary" type="button" onclick="makeInvite()">New detailer code</button>
         </div>
         <div id="inviteResult" class="note-box modal-section" hidden></div>
         <div id="modalError" class="error-box modal-section" role="alert" hidden></div>
@@ -1147,12 +1229,14 @@
       }
     }
 
-    async function makeInvite(role) {
+    // Invite codes are for detailers only: the app is the detailer tool, and
+    // management shares the dealership's one dashboard login.
+    async function makeInvite() {
       try {
-        const { data, error } = await supabaseClient.rpc('generate_invite_code', { p_dealership_id: dealershipId, p_role: role });
+        const { data, error } = await supabaseClient.rpc('generate_invite_code', { p_dealership_id: dealershipId, p_role: 'detailer' });
         if (error) throw error;
         const result = document.getElementById('inviteResult');
-        result.innerHTML = `New ${escapeHtml(role)} code: <b style="font-size:20px;letter-spacing:3px">${escapeHtml(data)}</b> · works for 7 days. In the app they tap “I'm new here”.`;
+        result.innerHTML = `New detailer code: <b style="font-size:20px;letter-spacing:3px">${escapeHtml(data)}</b> · new people can join with it for 7 days. In the app they tap “I'm new here”.`;
         result.hidden = false;
       } catch (e) {
         showModalError(e.message);
@@ -1198,6 +1282,7 @@
 
     async function initializeDashboardApp() {
       document.getElementById('signinForm').addEventListener('submit', handleSignIn);
+      document.getElementById('passwordForm').addEventListener('submit', handlePasswordChange);
       supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
       try {
         const { data: { session } } = await supabaseClient.auth.getSession();

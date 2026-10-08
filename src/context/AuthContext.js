@@ -44,7 +44,6 @@ export function AuthProvider({ children }) {
   // Set when the account couldn't be loaded (no signal, server trouble). The
   // gate shows a Retry screen instead of guessing the person has no dealership.
   const [loadError, setLoadError] = React.useState('');
-  const [error, setError] = React.useState('');
   const bootstrapUserIdRef = React.useRef(null);
 
   const activeOperationalRole = activeDealership
@@ -201,15 +200,7 @@ export function AuthProvider({ children }) {
     if (sessionUser) await bootstrapUser(sessionUser);
   }, [sessionUser, bootstrapUser]);
 
-  const signIn = React.useCallback(async (email, password) => {
-    setError('');
-    const response = await supabase.auth.signInWithPassword({ email, password });
-    if (response.error) setError(response.error.message);
-    return response;
-  }, []);
-
   const signOut = React.useCallback(async () => {
-    setError('');
     await stopOutbox(); // deletes this person's unsent actions + photo files
     await supabase.auth.signOut();
     await resetUserState();
@@ -249,8 +240,6 @@ export function AuthProvider({ children }) {
       servicesReady,
       loadError,
       retryLoad,
-      error,
-      signIn,
       signOut,
       selectActiveDealership,
       switchDealership,
@@ -268,8 +257,6 @@ export function AuthProvider({ children }) {
       servicesReady,
       loadError,
       retryLoad,
-      error,
-      signIn,
       signOut,
       selectActiveDealership,
       switchDealership,

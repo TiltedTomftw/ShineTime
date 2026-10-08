@@ -54,6 +54,8 @@ async function mountDashboard(rows = [], { signedIn = true, photos = [], employe
     },
     updates: [],
     invokes: [],
+    rpcs: [],
+    passwordUpdates: [],
     jobFetches: 0,
   };
   const dom = new JSDOM(HTML, {
@@ -76,9 +78,16 @@ async function mountDashboard(rows = [], { signedIn = true, photos = [], employe
               error: null,
             }),
             signOut: async () => ({ error: null }),
+            updateUser: async (attrs) => {
+              world.passwordUpdates.push(attrs);
+              return { data: { user: { id: 'mgr' } }, error: null };
+            },
           },
           from: (table) => makeQuery(table, world),
-          rpc: async () => ({ data: 'K7M3QPX', error: null }),
+          rpc: async (name, args) => {
+            world.rpcs.push({ name, args });
+            return { data: 'K7M3QPX', error: null };
+          },
           functions: {
             invoke: async (name, { body }) => {
               world.invokes.push(body);
@@ -510,5 +519,31 @@ test('dashboard: the Team page lists staff and resets a PIN', async () => {
     { id: reset.employeeUserId, pin: reset.newPin, d: reset.dealershipId },
     { id: 'u-ana', pin: '4321', d: DEALERSHIP },
   );
+  dom.window.close();
+});
+
+test('dashboard: the shared manager login can change its password', async () => {
+  const { doc, window, world, dom } = await mountDashboard([jobRow()]);
+  window.showPasswordForm();
+  assert.strictEqual(doc.getElementById('passwordForm').hidden, false);
+  doc.getElementById('newPassword').value = 'short';
+  doc.getElementById('confirmPassword').value = 'short';
+  await window.handlePasswordChange({ preventDefault() {} });
+  assert.strictEqual(world.passwordUpdates.length, 0, 'too short is refused');
+  doc.getElementById('newPassword').value = 'detail-shop-2026';
+  doc.getElementById('confirmPassword').value = 'detail-shop-2026';
+  await window.handlePasswordChange({ preventDefault() {} });
+  assert.strictEqual(world.passwordUpdates.length, 1);
+  assert.strictEqual(world.passwordUpdates[0].password, 'detail-shop-2026');
+  assert.strictEqual(doc.getElementById('app').hidden, false, 'back to the dashboard');
+  dom.window.close();
+});
+
+test('dashboard: invite codes are detailer-only (no manager codes)', async () => {
+  const { doc, window, world, dom } = await mountDashboard([], { employees: [] });
+  await window.showTeam();
+  assert.ok(!doc.getElementById('modalBody').textContent.includes('manager code'));
+  await window.makeInvite();
+  assert.strictEqual(world.rpcs[0].args.p_role, 'detailer');
   dom.window.close();
 });

@@ -215,7 +215,7 @@ Deno.serve(async (req) => {
       return json(404, { error: "Could not find that employee." });
     }
     if (!targetUser.user.email.endsWith(".employees.shinetime.invalid")) {
-      return json(400, { error: "Managers sign in with email and password; reset that from the login page." });
+      return json(400, { error: "The manager login's password can only be changed from the dashboard's Password button." });
     }
 
     const newPassword = await derivePassword(newPin, targetUser.user.email, pepper);
@@ -245,11 +245,15 @@ Deno.serve(async (req) => {
 
   const { data: invite, error: inviteError } = await admin
     .from("dealership_invite_codes")
-    .select("id, dealership_id, expires_at, max_uses, used_count, is_active")
+    .select("id, dealership_id, role, expires_at, max_uses, used_count, is_active")
     .eq("code", code)
     .maybeSingle();
   if (inviteError) return json(500, { error: "Could not check the code. Try again." });
   if (!invite) return invalid();
+  // The app is only for detailers; management uses the dashboard's shared login.
+  if (invite.role === "manager" || invite.role === "owner") {
+    return json(400, { error: "That's a manager code. Managers sign in on the web dashboard, not the app." });
+  }
 
   const codeUsableForJoining =
     invite.is_active &&
