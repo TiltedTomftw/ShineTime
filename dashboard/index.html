@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shinetime Dashboard</title>
+  <title>Shinetime Detail Dashboard</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -51,7 +51,16 @@
       display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
       gap: 12px; margin-bottom: 18px;
     }
-    .brand { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; }
+    .brand { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .brand-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; min-width: 0; }
+    .eyebrow {
+      display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600;
+      letter-spacing: 1.2px; text-transform: uppercase; color: var(--brand);
+    }
+    .logo-mark {
+      width: 14px; height: 14px; border-radius: 4px; flex: none;
+      background: linear-gradient(135deg, var(--brand-tint), var(--brand));
+    }
     .brand h1 {
       font-family: 'Space Grotesk', sans-serif; font-size: 28px; margin: 0; letter-spacing: -0.4px;
     }
@@ -245,7 +254,7 @@
   <section id="signin" class="signin" hidden>
     <form class="signin-card" id="signinForm" novalidate>
       <h1>Shinetime</h1>
-      <p>Manager dashboard</p>
+      <p>Detail Dashboard · sign in with your dealership's manager login</p>
       <div class="field">
         <label for="signinEmail">Email</label>
         <input id="signinEmail" type="email" autocomplete="username" required>
@@ -264,9 +273,12 @@
   <div class="app" id="app" hidden>
     <header class="topbar">
       <div class="brand">
-        <h1 id="dealershipTitle">Shinetime</h1>
-        <label class="muted" for="dealershipSwitch" id="dealershipSwitchLabel" hidden>Dealership</label>
-        <select id="dealershipSwitch" hidden onchange="switchDealership(this.value)"></select>
+        <div class="eyebrow"><span class="logo-mark" aria-hidden="true"></span>Shinetime · Detail Dashboard</div>
+        <div class="brand-row">
+          <h1 id="dealershipTitle">Shinetime</h1>
+          <label class="muted" for="dealershipSwitch" id="dealershipSwitchLabel" hidden>Dealership</label>
+          <select id="dealershipSwitch" hidden onchange="switchDealership(this.value)"></select>
+        </div>
       </div>
       <div class="who">
         <span id="whoEmail"></span>
@@ -645,7 +657,7 @@
       team = null;
       safeSet('dashboard_dealership_id', id);
       document.getElementById('dealershipTitle').textContent = m.name;
-      document.title = `${m.name} · Shinetime`;
+      document.title = `${m.name} · Shinetime Detail Dashboard`;
       await loadDashboard();
       clearInterval(refreshTimer);
       refreshTimer = setInterval(() => {
