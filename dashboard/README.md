@@ -17,7 +17,7 @@ Features:
 
 - Filters: date range (default **Today**), status (incl. Rework), detailer, search.
   Detailer and search filter in the browser, so typing never refetches.
-- Cards and Table views, stat tiles, Top detailers, Longest open jobs, Coverage.
+- Cards and Table views, stat tiles, Top detailers, Longest open jobs.
 - Job details with photos signed fresh from `job_photos` (links never expire on
   screen), notes and history.
 - **Reopen for Rework** with a note the detailer sees; the clock holds from the

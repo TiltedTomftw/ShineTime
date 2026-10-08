@@ -28,7 +28,7 @@ This product ships **two independent front-ends**. Do NOT conflate them:
      required). Reads Supabase directly (anon key + RLS).
    - **Features:** DATE (default Today) / STATUS (incl. Rework) / DETAILER /
      SEARCH filters (detailer + search filter client-side), Cards + Table,
-     stat tiles, Top Detailers, Longest Open Jobs, Coverage, Reopen for Rework
+     stat tiles, Top Detailers, Longest Open Jobs, Reopen for Rework
      (with a note), Reassign from the team, a **Team** page (detailer PIN reset,
      turn off/on, detailer invite codes) via the `employee-access` function, and a
      Password button. **Each dealership has ONE shared manager login** (no manager

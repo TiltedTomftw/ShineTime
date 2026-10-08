@@ -307,14 +307,6 @@
             <div class="insight-title">Longest open jobs</div>
             <ul class="insight-list" id="slowJobs"></ul>
           </div>
-          <div class="insight-card">
-            <div class="insight-title">Coverage</div>
-            <ul class="insight-list">
-              <li><span>Notes logged</span><strong id="notesCount">0</strong></li>
-              <li><span>Photos captured</span><strong id="photosCount">0</strong></li>
-              <li><span>Custody events</span><strong id="custodyCount">0</strong></li>
-            </ul>
-          </div>
         </div>
       </section>
 
@@ -767,9 +759,6 @@
         ? slow.map(({ job, duration }) => `<li><button type="button" class="row-button" data-job="${escapeHtml(job.jobId)}" onclick="openJob(this.dataset.job)"><span>${escapeHtml(stockLabel(job))} · ${escapeHtml(job.detailerName)} · ${escapeHtml(STATUS_LABEL[job.status])}</span><strong class="time">${formatTime(duration)}</strong></button></li>`).join('')
         : '<li><span>No open jobs</span><strong>--</strong></li>';
 
-      document.getElementById('notesCount').textContent = jobs.reduce((s, j) => s + (j.notes || []).length, 0);
-      document.getElementById('photosCount').textContent = jobs.reduce((s, j) => s + (j.photos || []).length, 0);
-      document.getElementById('custodyCount').textContent = jobs.reduce((s, j) => s + (j.custodyEvents || []).length, 0);
     }
 
     function renderCards(jobs) {

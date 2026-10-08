@@ -285,20 +285,6 @@ test('dashboard: counts are pluralised properly', async () => {
   dom.window.close();
 });
 
-test('dashboard: coverage counts notes, photos and custody events', async () => {
-  const { doc, dom } = await mountDashboard([
-    jobRow({
-      notes: [{ text: 'n1' }, { text: 'n2' }],
-      photos: [{ storagePath: 'p' }],
-      custodyEvents: [{ type: 'start' }, { type: 'pause' }, { type: 'resume' }],
-    }),
-  ]);
-  assert.strictEqual(doc.getElementById('notesCount').textContent, '2');
-  assert.strictEqual(doc.getElementById('photosCount').textContent, '1');
-  assert.strictEqual(doc.getElementById('custodyCount').textContent, '3');
-  dom.window.close();
-});
-
 test('dashboard: a malicious stock number is rendered inert', async () => {
   const { doc, dom } = await mountDashboard([
     jobRow({ stock_number: '<img src=x onerror=alert(1)>' }),
