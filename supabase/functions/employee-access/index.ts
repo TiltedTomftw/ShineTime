@@ -131,6 +131,11 @@ Deno.serve(async (req) => {
 
   const admin = createClient(supabaseUrl, serviceKey, { auth: { persistSession: false } });
   const action = body.action || "enrol";
+  // Never treat an unknown request as a sign-in attempt (that produced a
+  // confusing "enter your code and PIN" error for a dashboard button).
+  if (!["enrol", "list_employees", "reset_pin", "remove_employee"].includes(action)) {
+    return json(400, { error: "This action isn't available. Refresh the page and try again." });
+  }
 
   // --- Manager-gated: team list, PIN reset, remove a detailer ---------------
   // An employee's password is DERIVED from their PIN, so a forgotten PIN can
