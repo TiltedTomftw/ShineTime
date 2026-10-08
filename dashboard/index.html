@@ -194,6 +194,9 @@
     .photo-note { margin-top: 8px; color: #ddd; font-size: 14px; }
 
     .team-table td .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    /* Team rows aren't clickable, so no hover highlight or pointer. */
+    .compact-table.team-table tbody tr { cursor: default; }
+    .compact-table.team-table tbody tr:hover { background: none; }
     .muted { color: var(--muted); }
 
     /* Phones: management checks in from the floor too. */
@@ -221,7 +224,19 @@
       .modal-content { max-height: 92vh; border-radius: 18px 18px 0 0; padding: 18px 16px 28px; }
       .modal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .manager-actions .btn { flex: 1; min-height: 44px; }
-      .team-table th:nth-child(4), .team-table td:nth-child(4) { display: none; }
+      /* Team list: one stacked block per person, buttons full width below. */
+      .team-table thead { display: none; }
+      .team-table, .team-table tbody, .team-table tr { display: block; width: 100%; }
+      .team-table tr { padding: 12px 0; border-bottom: 1px solid var(--border); }
+      .team-table td { display: block; border: 0; padding: 0; white-space: normal; }
+      .team-table td:nth-child(2), .team-table td:nth-child(3) {
+        display: inline; color: var(--muted); font-size: 14px; text-transform: capitalize;
+      }
+      .team-table td:nth-child(2)::after { content: ' · '; }
+      .team-table td:nth-child(4) { display: none; }
+      .team-table td .actions { margin-top: 10px; }
+      .team-table td .actions:empty { display: none; }
+      .team-table td .actions .btn { flex: 1; min-height: 44px; }
       .signin-card { padding: 22px; }
     }
   </style>
