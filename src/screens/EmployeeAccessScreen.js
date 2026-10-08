@@ -29,7 +29,7 @@ const MODES = {
   },
 };
 
-export default function EmployeeAccessScreen({ onManagerSignIn }) {
+export default function EmployeeAccessScreen() {
   const [mode, setMode] = React.useState('signin');
   const [code, setCode] = React.useState('');
   const [name, setName] = React.useState('');
@@ -116,21 +116,7 @@ export default function EmployeeAccessScreen({ onManagerSignIn }) {
   }
 
   return (
-    <AuthLayout
-      subtitle="Sign in to start detailing"
-      footer={
-        onManagerSignIn ? (
-          <Pressable
-            onPress={onManagerSignIn}
-            accessibilityRole="button"
-            style={styles.managerLink}
-            hitSlop={8}
-          >
-            <Text style={styles.managerLinkText}>Manager sign-in</Text>
-          </Pressable>
-        ) : null
-      }
-    >
+    <AuthLayout subtitle="Sign in to start detailing">
       <View style={styles.tabs} accessibilityRole="tablist">
         {Object.entries(MODES).map(([key, m]) => (
           <Pressable
@@ -244,17 +230,4 @@ const styles = StyleSheet.create({
   help: { ...type.footnote, textAlign: 'center', marginTop: spacing.lg },
   confirmTitle: { ...type.title, marginBottom: spacing.md },
   confirmBody: { ...type.callout, color: colors.textSecondary, lineHeight: 22 },
-  // Kept well away from the form: employees are the audience here.
-  managerLink: {
-    marginTop: spacing.xl,
-    minHeight: 44,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  managerLinkText: {
-    color: colors.white,
-    fontWeight: '600',
-    fontSize: 15,
-    textDecorationLine: 'underline',
-  },
 });

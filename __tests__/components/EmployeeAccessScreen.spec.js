@@ -136,14 +136,8 @@ describe('EmployeeAccessScreen', () => {
     expect(screen.getByTestId('pin-input').props.value).toBe('1234');
   });
 
-  it('offers a manager sign-in link only when a handler is supplied', async () => {
-    const onManagerSignIn = jest.fn();
-    const view = await mount({ onManagerSignIn });
-    await press('Manager sign-in');
-    expect(onManagerSignIn).toHaveBeenCalled();
-    await view.unmount();
-
+  it('has no manager sign-in: managers use the web dashboard', async () => {
     await mount();
-    expect(screen.queryByText('Manager sign-in')).toBeNull();
+    expect(screen.queryByText(/Manager sign-in/i)).toBeNull();
   });
 });

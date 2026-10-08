@@ -1,7 +1,6 @@
 import React from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
-import AuthScreen from './src/screens/AuthScreen';
 import DealershipSelectScreen from './src/screens/DealershipSelectScreen';
 import EmployeeAccessScreen from './src/screens/EmployeeAccessScreen';
 import JoinByCodeScreen from './src/screens/JoinByCodeScreen';
@@ -22,19 +21,12 @@ function AppEntry() {
     selectActiveDealership,
   } = useAuth();
   const [showJoin, setShowJoin] = React.useState(false);
-  const [showManagerSignIn, setShowManagerSignIn] = React.useState(false);
 
   if (isLoading) return <SplashScreen />;
 
-  // Employees are the majority and must never see a dealership login, so the
-  // code + name + PIN screen is the default. Managers use a small link.
-  if (!session) {
-    return showManagerSignIn ? (
-      <AuthScreen onBack={() => setShowManagerSignIn(false)} />
-    ) : (
-      <EmployeeAccessScreen onManagerSignIn={() => setShowManagerSignIn(true)} />
-    );
-  }
+  // The app is the detailer tool: everyone signs in with a code, their name and
+  // a PIN. Managers use the web dashboard (and join with a code if they detail).
+  if (!session) return <EmployeeAccessScreen />;
 
   // Couldn't load the account (no signal, server trouble): say so and offer
   // Retry, rather than assuming the person has no dealership.
