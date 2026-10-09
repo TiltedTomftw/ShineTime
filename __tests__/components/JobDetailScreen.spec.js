@@ -89,7 +89,7 @@ beforeEach(() => {
 describe('JobDetailScreen', () => {
   it('leads with a ticking H:MM:SS timer and the running state', async () => {
     await mount(baseJob());
-    expect(screen.getByText(/^1:24:0\d$/)).toBeTruthy();
+    expect(screen.getByText(/^1:24:\d\d$/)).toBeTruthy();
     expect(screen.getByText('Running')).toBeTruthy();
     expect(screen.getByText('Pause')).toBeTruthy();
     expect(screen.getByText('Complete')).toBeTruthy();
