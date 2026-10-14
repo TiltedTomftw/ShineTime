@@ -18,6 +18,10 @@ export const supabase = createClient(
   {
     auth: {
       storage: AsyncStorage,
+      // On web the app shares an origin with the manager dashboard (both on
+      // GitHub Pages), and both would use Supabase's default localStorage key,
+      // so signing into one signed you into the other. Keep the app's apart.
+      ...(Platform.OS === 'web' ? { storageKey: 'shinetime-detailer-auth' } : null),
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
