@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { Platform, View, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -26,9 +27,13 @@ const navTheme = {
 };
 
 export default function AppNavigator() {
+  // Some Android phones keep the app out of the camera-cutout strip and paint it
+  // black (no top inset reaches us). Dark icons vanish on that, so go light there.
+  const insets = useSafeAreaInsets();
+  const barStyle = Platform.OS === 'android' && insets.top === 0 ? 'light' : 'dark';
   return (
     <NavigationContainer theme={navTheme}>
-      <StatusBar style="dark" />
+      <StatusBar style={barStyle} />
       <View style={styles.root}>
         <View style={styles.root}>
           <Stack.Navigator
