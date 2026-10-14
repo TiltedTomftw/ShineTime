@@ -14,6 +14,8 @@ module.exports = [
       '.expo/**',
       'dist/**',
       'web-build/**',
+      'dist-web/**',
+      '_site/**',
       'supabase/functions/**',
     ],
   },

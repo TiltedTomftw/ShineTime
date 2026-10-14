@@ -29,7 +29,7 @@ Features:
 ## Deploy
 
 Auto-deploys to GitHub Pages on push to `main` via
-[`.github/workflows/deploy-dashboard.yml`](../.github/workflows/deploy-dashboard.yml).
+[`.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml).
 One-time: set **Settings → Pages → Source → GitHub Actions** in the GitHub repo.
 
 It's a single static file — no build step. Edit `index.html` directly.

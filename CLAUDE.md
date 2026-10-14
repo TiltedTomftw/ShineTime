@@ -21,8 +21,11 @@ This product ships **two independent front-ends**. Do NOT conflate them:
    **separate surface from the RN app** — do NOT rebuild its features inside the
    HomeScreen; edit `dashboard/index.html` directly. See `dashboard/README.md`.
    - **Deploy:** auto-published to GitHub Pages by
-     `.github/workflows/deploy-dashboard.yml` on push to `main` (one-time:
-     Settings → Pages → Source → "GitHub Actions").
+     `.github/workflows/deploy-pages.yml` on push to `main` (one-time:
+     Settings → Pages → Source → "GitHub Actions"). The same Pages site also
+     serves the **detailer app's web build at `/app/`** (Expo web export;
+     `app.config.js` sets the sub-path from `EXPO_BASE_URL`). Detailers use it
+     from the phone browser instead of Expo Go.
    - **Usage:** manager signs in with a real form (email/password); the
      dealership comes from their memberships (`?d=UUID` still honoured, not
      required). Reads Supabase directly (anon key + RLS).

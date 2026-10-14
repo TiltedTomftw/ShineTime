@@ -1,13 +1,23 @@
-name: Deploy manager dashboard
+name: Deploy to GitHub Pages
 
-# Publishes dashboard/ (the standalone manager web app) to GitHub Pages.
+# Publishes one Pages site:
+#   /      -> dashboard/ (the standalone manager web app)
+#   /app/  -> the detailer app's web build (Expo export)
 # One-time setup: repo Settings -> Pages -> Source -> "GitHub Actions".
 on:
   push:
     branches: [main]
     paths:
       - 'dashboard/**'
-      - '.github/workflows/deploy-dashboard.yml'
+      - 'src/**'
+      - 'assets/**'
+      - 'App.js'
+      - 'index.js'
+      - 'app.json'
+      - 'app.config.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-pages.yml'
   workflow_dispatch:
 
 permissions:
@@ -26,11 +36,28 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # Public by design (shipped inside every app build); RLS is the real boundary.
+      EXPO_PUBLIC_SUPABASE_URL: https://oktqajirertyifyfixfa.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9rdHFhamlyZXJ0eWlmeWZpeGZhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU1Njg3OTcsImV4cCI6MjA5MTE0NDc5N30.F3F_43K22tKrZLJx3xCUds6WnVtn-JULIo1zh2LeosM
+      EXPO_BASE_URL: /${{ github.event.repository.name }}/app
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Build the detailer web app
+        run: npx expo export -p web --output-dir dist-web
+      - name: Assemble the site
+        run: |
+          mkdir -p _site
+          cp -r dashboard/. _site/
+          cp -r dist-web _site/app
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dashboard
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

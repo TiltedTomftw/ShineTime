@@ -3,6 +3,8 @@ dist-smoke*/
 .expo/
 dist/
 web-build/
+dist-web/
+_site/
 package-lock.json
 supabase/functions/
 supabase/.temp/
