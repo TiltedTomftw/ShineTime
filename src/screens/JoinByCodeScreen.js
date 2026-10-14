@@ -1,107 +1,64 @@
 import React from 'react';
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
-} from 'react-native';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
+import AuthLayout from '../components/AuthLayout';
+import { Button, Field } from '../components/ui';
+import { spacing } from '../theme';
 
-// Self-serve: a signed-in user redeems an invite code to join a dealership.
-// After success, refreshMemberships() drives the existing AppEntry flow.
-export default function JoinByCodeScreen({ onDone, onBack }) {
-  const { refreshMemberships, signOut } = useAuth();
+// A signed-in person with no active dealership redeems a new invite code.
+export default function JoinByCodeScreen({ onBack }) {
+  const { refreshMemberships } = useAuth();
   const [code, setCode] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
+  const [error, setError] = React.useState('');
 
   const handleSubmit = async () => {
     const normalized = code.trim().toUpperCase();
-    if (normalized.length < 4) {
-      Alert.alert('Invalid code', 'Enter the invite code from your manager.');
-      return;
-    }
+    if (normalized.length < 4 || submitting) return;
     setSubmitting(true);
+    setError('');
     try {
-      const { error } = await supabase.rpc('redeem_invite_code', { p_code: normalized });
-      if (error) throw error;
+      const { error: rpcError } = await supabase.rpc('redeem_invite_code', { p_code: normalized });
+      if (rpcError) throw rpcError;
       await refreshMemberships();
-      if (onDone) onDone();
-    } catch (error) {
-      // RPC returns a single generic error for any bad/expired/used code.
-      Alert.alert('Could not join', error?.message || 'Invalid or expired invite code');
+    } catch {
+      // The RPC deliberately returns one generic error for any bad code.
+      setError("That code isn't valid or has expired. Ask your manager for a new one.");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <View style={styles.content}>
-        <Text style={styles.title}>Join Dealership</Text>
-        <Text style={styles.subtitle}>Enter the invite code your manager gave you.</Text>
-
-        <TextInput
-          style={styles.input}
-          value={code}
-          onChangeText={(t) => setCode(t.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12))}
-          placeholder="Invite code"
-          autoCapitalize="characters"
-          autoCorrect={false}
-          editable={!submitting}
-        />
-
-        <TouchableOpacity
-          style={[styles.primaryButton, (code.trim().length < 4 || submitting) && styles.disabled]}
-          onPress={handleSubmit}
-          disabled={code.trim().length < 4 || submitting}
-        >
-          <Text style={styles.primaryButtonText}>{submitting ? 'Joining...' : 'Join'}</Text>
-        </TouchableOpacity>
-
-        {onBack && (
-          <TouchableOpacity style={styles.linkBtn} onPress={onBack}>
-            <Text style={styles.linkText}>Need to create a dealership? Create</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity style={styles.linkBtn} onPress={signOut}>
-          <Text style={styles.linkText}>Sign out</Text>
-        </TouchableOpacity>
-      </View>
-    </KeyboardAvoidingView>
+    <AuthLayout subtitle="Join a dealership">
+      <Field
+        label="Invite code"
+        value={code}
+        onChangeText={(t) =>
+          setCode(
+            t
+              .replace(/[^a-zA-Z0-9]/g, '')
+              .toUpperCase()
+              .slice(0, 12),
+          )
+        }
+        placeholder="e.g. K7M3QPX"
+        autoCapitalize="characters"
+        autoCorrect={false}
+        editable={!submitting}
+        returnKeyType="go"
+        onSubmitEditing={handleSubmit}
+        error={error}
+        inputStyle={{ letterSpacing: 3, fontWeight: '600' }}
+      />
+      <Button
+        title="Join"
+        onPress={handleSubmit}
+        disabled={code.trim().length < 4}
+        loading={submitting}
+        style={{ marginTop: spacing.sm, marginBottom: spacing.sm }}
+      />
+      {onBack ? <Button title="Back" variant="ghost" onPress={onBack} /> : null}
+    </AuthLayout>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#667eea' },
-  content: { flex: 1, justifyContent: 'center', padding: 24 },
-  title: { fontSize: 32, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 8 },
-  subtitle: { fontSize: 15, color: '#e0e7ff', textAlign: 'center', marginBottom: 24 },
-  input: {
-    backgroundColor: '#fff',
-    padding: 14,
-    borderRadius: 10,
-    fontSize: 18,
-    letterSpacing: 2,
-    textAlign: 'center',
-    marginBottom: 12,
-  },
-  primaryButton: {
-    backgroundColor: '#fff',
-    borderRadius: 10,
-    padding: 16,
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  disabled: { opacity: 0.6 },
-  primaryButtonText: { color: '#667eea', fontWeight: 'bold', fontSize: 16 },
-  linkBtn: { marginTop: 14, alignItems: 'center' },
-  linkText: { color: '#fff', fontWeight: '600' },
-});

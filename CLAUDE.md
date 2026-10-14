@@ -8,10 +8,12 @@ Expo / React Native app (SDK 54) backed by Supabase. Full architecture lives in
 This product ships **two independent front-ends**. Do NOT conflate them:
 
 1. **The mobile app** (this repo's `App.js` / `src/`) — the **detailer** tool.
-   Detailers start/pause/resume/complete jobs, add notes/photos, scan keytags
-   (OCR). A manager can sign in and see a *light* HomeScreen summary ("Recent
-   Jobs" panel), but **the app is not the management tool** — keep the manager
-   HomeScreen minimal.
+   Start/pause/resume/complete jobs, notes/photos, keytag scans (OCR). **It has
+   no manager mode** (decided Oct 2026): everyone, managers included, sees only
+   their own cars. Service managers work at a desk PC, so every manager feature
+   (oversight, rework, reassign, team/PINs, invite codes) lives ONLY on the web
+   dashboard. Don't add manager screens to the app; the Account screen just
+   points managers to the dashboard.
 
 2. **The manager dashboard** — a JIRA-style **standalone web app** that lives in
    THIS repo at **`dashboard/index.html`** (one self-contained static file;
@@ -19,13 +21,22 @@ This product ships **two independent front-ends**. Do NOT conflate them:
    **separate surface from the RN app** — do NOT rebuild its features inside the
    HomeScreen; edit `dashboard/index.html` directly. See `dashboard/README.md`.
    - **Deploy:** auto-published to GitHub Pages by
-     `.github/workflows/deploy-dashboard.yml` on push to `main` (one-time:
-     Settings → Pages → Source → "GitHub Actions").
-   - **Usage:** opened per-dealership via `?d=DEALERSHIP_UUID`; manager signs in
-     (email/password); reads Supabase directly (anon key + RLS).
-   - **Features:** STATUS / DATE-RANGE / DETAILER / free-text SEARCH filters,
-     Cards + Compact-Table views, stat tiles (Completed / Active / Paused / Avg),
-     Top Detailers, Longest Active Jobs, Coverage (notes/photos/custody).
+     `.github/workflows/deploy-pages.yml` on push to `main` (one-time:
+     Settings → Pages → Source → "GitHub Actions"). The same Pages site also
+     serves the **detailer app's web build at `/app/`** (Expo web export;
+     `app.config.js` sets the sub-path from `EXPO_BASE_URL`). Detailers use it
+     from the phone browser instead of Expo Go.
+   - **Usage:** manager signs in with a real form (email/password); the
+     dealership comes from their memberships (`?d=UUID` still honoured, not
+     required). Reads Supabase directly (anon key + RLS).
+   - **Features:** DATE (default Today) / STATUS (incl. Rework) / DETAILER /
+     SEARCH filters (detailer + search filter client-side), Cards + Table,
+     stat tiles, Top Detailers, Longest Open Jobs, Reopen for Rework
+     (with a note), Reassign from the team, a **Team** page (detailer PIN reset,
+     Remove (login gone, jobs kept), detailer invite codes) via the `employee-access` function, and a
+     Password button. **Each dealership has ONE shared manager login** (no manager
+     invites); it works on PC and phone. Photos are
+     signed fresh from `job_photos` (never from payload URLs).
    - (Superseded copies to ignore: `server/public/manager.html` on branch
      `feature/supabase-remote-sync`, and the `supabase/functions/manager-dashboard`
      Edge Function.)
@@ -44,7 +55,19 @@ This product ships **two independent front-ends**. Do NOT conflate them:
 - `npm start` — Expo dev server (QR for Expo Go).
 - `npm run web` — web build on :8081. Preview via `.claude/launch.json` config
   `expo-web` (never launch the dev server through Bash).
-- `npm test` — `node --test` unit suites (`timeMath`, `jobLogic`).
+- `npm test` — `node --test` unit suites (`timeMath`, `jobLogic`, `outbox`). Pure logic only.
+- `npm run test:components` — jest + `@testing-library/react-native` render tests
+  (`__tests__/components/**/*.spec.js`). Runs in CI. **RNTL v14's `render`/`unmount`
+  are async — always `await` them.** Named `.spec.js` on purpose so `node --test`
+  doesn't try to run JSX.
+- `npm run test:integration` — end-to-end suite against the REAL Supabase project
+  (`__tests__/integration/`): RLS + tenant isolation, job lifecycle in Postgres,
+  the completed-job lock, actions applied to the server copy, manager write-backs.
+  The dashboard suite alone (jsdom, no network) runs with
+  `node --test __tests__/integration/dashboard.integration.js`. Needs
+  `.env` + network, so it is deliberately **not** auto-discovered by `npm test`
+  and **not** in CI. It creates throwaway dealerships/users per run and deletes
+  them afterwards — it never touches real dealerships.
 - `npm run lint` — eslint (flat config, `eslint-config-expo`). `npm run format` — prettier.
 - `npx expo start -c` — clear Metro cache (needed after `.env` changes).
 
@@ -52,12 +75,25 @@ CI (`.github/workflows/ci.yml`) runs lint → format:check → tests on every pu
 
 ## Project shape
 
-- `App.js` — auth gate: session → dealership → role → PIN.
+- `App.js` — auth gate: session → account loaded (else Retry screen) → dealership → app.
 - `src/lib/supabase.js` — client (anon key is public; **RLS is the real security boundary**).
-- `src/context/AuthContext.js` — session, profile, memberships, active dealership/role.
-- `src/services/storage.js` — jobs CRUD + Supabase sync + pending-write queue
-  (all local writes go through the `mutateLocalJobs` mutex).
+- `src/context/AuthContext.js` — session, profile, memberships, active dealership/role;
+  sets the services' session context and starts the per-person outbox.
+- **Supabase is the source of truth for jobs.** The phone keeps NO job list —
+  only `outbox` entries (unsent actions + photo files), each deleted as soon as
+  Supabase confirms it, and cleared on sign-out. Don't reintroduce a local cache.
+  - `src/services/jobs.js` — reads (`fetchOpenJobs`, `fetchJob`, `fetchHistory`,
+    `fetchTodayStats`) + actions (`createJob`, `performJobAction`, `addJobPhoto`).
+  - `src/services/outboxCore.js` (pure rules) / `outbox.js` (RN wiring) /
+    `jobSync.js` (sends one entry: re-read row → `applyJobAction` → save with a
+    `client_updated_at` check).
 - `src/services/ocr.js` — calls the `ocr-vehicle` Edge Function.
+- `supabase/functions/employee-access` — employee join/sign-in (modes `join` /
+  `signin`; returning staff can use expired codes) + manager actions
+  `list_employees`, `reset_pin`, `remove_employee`. **Changes need
+  `npx supabase functions deploy employee-access`.**
+- UI: `src/theme.js` tokens + `src/components/ui.js` (Button, Card, Field,
+  StatusPill, Notice…). Use these; don't hardcode colours.
 - `supabase/migrations/` — 001–002 applied; **003 (RLS/PIN) and 004 (onboarding)
   are drafted but NOT applied** (see `docs/PHASE1_HARDENING_NOTES.md`,
   `docs/PHASE2_ONBOARDING_NOTES.md`).
@@ -69,9 +105,9 @@ CI (`.github/workflows/ci.yml`) runs lint → format:check → tests on every pu
 - Privileged work (OCR, etc.) runs in Edge Functions, never in the app.
 - Duration math (`src/services/timeMath.js`) clamps negatives for clock skew; unit-tested.
 - Pure, sync-critical logic is extracted into **CommonJS** modules (`timeMath.js`,
-  `jobLogic.js`) so `node --test` can `require()` them without loading RN/Supabase.
-  `storage.js` imports them. Add new pure helpers there and unit-test them, rather
-  than burying testable logic inside the RN-coupled `storage.js`.
+  `jobLogic.js`, `outboxCore.js`) so `node --test` can `require()` them without
+  loading RN/Supabase. Every job state change goes through `applyJobAction`; add
+  new actions there and unit-test them.
 - Secrets live in repo-root `.env` (gitignored). Missing env → "Supabase env vars missing".
 
 ## Known issues to watch

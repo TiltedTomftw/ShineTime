@@ -1,322 +1,256 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { getOverallStats, getAllJobs } from '../services/storage';
+import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
-import { vehicleTitle, vehicleDescription } from '../components/VehicleSummary';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { alertMessage } from '../components/alerts';
+import JobCard from '../components/JobCard';
+import { EmptyState, Notice, SectionLabel } from '../components/ui';
+import { fetchOpenJobs, fetchTodayStats, performJobAction } from '../services/jobs';
+import { formatDuration } from '../services/timeMath';
+import { colors, radius, spacing, type, shadow } from '../theme';
 
-export default function HomeScreen({ navigation }) {
-  const { activeOperationalRole, activeDealership, signOut } = useAuth();
-  const isManager = (activeOperationalRole || '').toLowerCase() === 'manager';
-  const [stats, setStats] = React.useState({
-    completed: 0,
-    inProgress: 0,
-    avgTime: 0,
-  });
-  const [recentJobs, setRecentJobs] = React.useState([]);
-  const [pausedCount, setPausedCount] = React.useState(0);
+const initials = (name) =>
+  (name || '?')
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((p) => p[0].toUpperCase())
+    .join('');
+
+export default function HomeScreen({ navigation, route }) {
+  const insets = useSafeAreaInsets();
+  const { userName, activeDealership } = useAuth();
+  const [jobs, setJobs] = React.useState([]);
+  const [stats, setStats] = React.useState(null);
+  const [offline, setOffline] = React.useState(false);
+  const [loaded, setLoaded] = React.useState(false);
+  const [refreshing, setRefreshing] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
+  const [now, setNow] = React.useState(() => Date.now());
+
+  const load = React.useCallback(async () => {
+    try {
+      const open = await fetchOpenJobs();
+      setJobs(open.jobs);
+      setOffline(open.offline);
+      setLoadError('');
+      if (!open.offline) {
+        fetchTodayStats()
+          .then(setStats)
+          .catch(() => {});
+      }
+    } catch (e) {
+      setLoadError(e?.message || 'Could not load your cars.');
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
 
   useFocusEffect(
     React.useCallback(() => {
-      let active = true;
-      const loadData = async () => {
-        try {
-          const overallStats = await getOverallStats();
-          if (!active) return;
-          setStats(overallStats);
-          const allJobs = await getAllJobs();
-          if (!active) return;
-          setRecentJobs(allJobs.slice(0, 8));
-          setPausedCount(allJobs.filter((j) => j.status === 'paused').length);
-        } catch (error) {
-          console.log('Could not load home data:', error?.message || error);
-        }
-      };
-      loadData();
-      // Cancel state updates if the screen blurs/unmounts mid-load.
-      return () => {
-        active = false;
-      };
-    }, []),
+      load();
+    }, [load]),
+  );
+
+  // "Done · 52 min" after completing a car, cleared after a few seconds.
+  const flash = route.params?.justCompleted || null;
+  React.useEffect(() => {
+    if (!flash) return undefined;
+    const t = setTimeout(() => navigation.setParams({ justCompleted: undefined }), 6000);
+    return () => clearTimeout(t);
+  }, [flash, navigation]);
+
+  const anyRunning = jobs.some((j) => j.status === 'in_progress');
+  React.useEffect(() => {
+    if (!anyRunning) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [anyRunning]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await load();
+    setRefreshing(false);
+  };
+
+  const resume = async (job) => {
+    try {
+      const updated = await performJobAction(job, 'resume');
+      setJobs((list) => list.map((j) => (j.jobId === job.jobId ? updated : j)));
+      navigation.navigate('JobDetail', { jobId: job.jobId });
+    } catch (e) {
+      alertMessage("Couldn't resume", e?.message || 'Try again.');
+    }
+  };
+
+  const working = jobs.filter((j) => j.status === 'in_progress' || j.status === 'paused');
+  const rework = jobs.filter((j) => j.status === 'needs_rework');
+  const dealershipName = activeDealership?.dealership?.name || 'Your dealership';
+  const firstName = (userName || '').split(' ')[0] || 'My';
+
+  const header = (
+    <View style={[styles.header, { paddingTop: insets.top + spacing.md }]}>
+      <View style={styles.headerText}>
+        <Text style={styles.dealership} numberOfLines={1}>
+          {dealershipName}
+        </Text>
+        <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
+          {`${firstName}'s cars`}
+        </Text>
+      </View>
+      <Pressable
+        onPress={() => navigation.navigate('Account')}
+        accessibilityRole="button"
+        accessibilityLabel="Account and sign out"
+        style={styles.avatar}
+        hitSlop={6}
+      >
+        <Text style={styles.avatarText}>{initials(userName)}</Text>
+      </Pressable>
+    </View>
+  );
+
+  const notices = (
+    <>
+      {flash ? (
+        <Notice tone="success">
+          {`Done: #${flash.stock}${flash.durationMs ? ` · ${formatDuration(flash.durationMs)}` : ''}`}
+        </Notice>
+      ) : null}
+      {offline ? <Notice tone="warning">Offline. Showing what this phone last saw.</Notice> : null}
+      {loadError ? (
+        <Notice tone="error" action="Retry" onAction={load}>
+          {loadError}
+        </Notice>
+      ) : null}
+    </>
   );
 
   return (
-    <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Shinetime</Text>
-        <Text style={styles.subtitle}>
-          {isManager
-            ? `${activeDealership?.dealership?.name || 'Dealership'} Manager Dashboard`
-            : 'Detailer Dashboard'}
-        </Text>
-      </View>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + spacing.xxl }]}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+    >
+      {header}
+      <View style={styles.gap}>{notices}</View>
 
-      <View style={styles.stats}>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>{stats.completed}</Text>
-          <Text style={styles.statLabel}>Completed</Text>
-        </View>
-        <TouchableOpacity style={styles.statCard} onPress={() => navigation.navigate('InProgress')}>
-          <Text style={styles.statValue}>{stats.inProgress}</Text>
-          <Text style={styles.statLabel}>{isManager ? 'Active' : 'In Progress'}</Text>
-        </TouchableOpacity>
-        <View style={styles.statCard}>
-          <Text style={styles.statValue}>
-            {isManager ? pausedCount : Math.round(stats.avgTime / 60000) || '--'}
-          </Text>
-          <Text style={styles.statLabel}>{isManager ? 'Paused' : 'Avg Time (min)'}</Text>
-        </View>
-      </View>
-
-      {!isManager && (
-        <TouchableOpacity
-          style={styles.primaryButton}
-          onPress={() => navigation.navigate('NewJob')}
-        >
-          <Text style={styles.primaryButtonText}>+ Start New Job</Text>
-        </TouchableOpacity>
-      )}
-
-      {isManager && (
-        <View style={styles.managerPanel}>
-          <Text style={styles.managerTitle}>Recent Jobs</Text>
-          {recentJobs.length === 0 ? (
-            <Text style={styles.managerEmpty}>No jobs found yet.</Text>
-          ) : (
-            recentJobs.map((job) => (
-              <TouchableOpacity
-                key={job.jobId}
-                style={styles.managerRow}
-                onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
-              >
-                <View style={styles.managerRowLeft}>
-                  <Text style={styles.managerVehicle}>{vehicleTitle(job)}</Text>
-                  <Text style={styles.managerMeta}>
-                    {[
-                      vehicleDescription(job),
-                      job.detailerName || 'Unknown',
-                      job.status || 'queued',
-                    ]
-                      .filter(Boolean)
-                      .join('  ·  ')}
-                  </Text>
-                </View>
-                <Text style={styles.managerChevron}>{'>'}</Text>
-              </TouchableOpacity>
-            ))
-          )}
-
-          <TouchableOpacity
-            style={styles.inviteButton}
-            onPress={() => navigation.navigate('ManageInviteCodes')}
-          >
-            <Text style={styles.inviteButtonText}>+ Invite Team Member</Text>
-          </TouchableOpacity>
-
-          <View style={styles.managerActions}>
-            <TouchableOpacity
-              style={[styles.managerActionButton, styles.managerActionDanger]}
-              onPress={signOut}
-            >
-              <Text style={styles.managerActionText}>Log Out</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      <TouchableOpacity
-        style={styles.secondaryButton}
-        onPress={() => navigation.navigate('History')}
+      <Pressable
+        onPress={() => navigation.navigate('NewJob')}
+        accessibilityRole="button"
+        accessibilityLabel="Scan keytag to start a new car"
+        style={({ pressed }) => [styles.cta, pressed && { backgroundColor: colors.accentPressed }]}
       >
-        <Text style={styles.secondaryButtonText}>
-          {isManager ? 'View All Dealership Jobs' : 'View Job History'}
-        </Text>
-      </TouchableOpacity>
+        <Ionicons name="scan" size={28} color={colors.onAccent} />
+        <View>
+          <Text style={styles.ctaTitle}>Scan keytag</Text>
+          <Text style={styles.ctaSub}>Start a new car</Text>
+        </View>
+      </Pressable>
 
-      {!isManager && (
-        <TouchableOpacity style={styles.changeRoleButton} onPress={signOut}>
-          <Text style={styles.changeRoleButtonText}>Log Out</Text>
-        </TouchableOpacity>
+      {rework.length > 0 ? (
+        <>
+          <SectionLabel>{`Sent back for rework · ${rework.length}`}</SectionLabel>
+          {rework.map((job) => (
+            <JobCard
+              key={job.jobId}
+              job={job}
+              now={now}
+              onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
+              onResume={() => resume(job)}
+            />
+          ))}
+        </>
+      ) : null}
+
+      <SectionLabel>{`Working now · ${working.length}`}</SectionLabel>
+      {loaded && working.length === 0 ? (
+        <EmptyState
+          icon="car-outline"
+          title="No cars in progress"
+          body="Scan a keytag to start one. Paused cars wait here too."
+        />
+      ) : (
+        working.map((job) => (
+          <JobCard
+            key={job.jobId}
+            job={job}
+            now={now}
+            onPress={() => navigation.navigate('JobDetail', { jobId: job.jobId })}
+            onResume={() => resume(job)}
+          />
+        ))
       )}
+
+      <Pressable
+        onPress={() => navigation.navigate('History')}
+        accessibilityRole="button"
+        accessibilityLabel="Open history"
+        style={styles.today}
+      >
+        <Text style={styles.todayText}>
+          {stats
+            ? stats.completed > 0
+              ? `Today: ${stats.completed} done · avg ${formatDuration(stats.avgMs)}`
+              : 'Nothing finished yet today'
+            : 'Today'}
+        </Text>
+        <View style={styles.historyLink}>
+          <Text style={styles.historyText}>History</Text>
+          <Ionicons name="chevron-forward" size={16} color={colors.accent} />
+        </View>
+      </Pressable>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  content: { paddingHorizontal: spacing.lg },
+  gap: { gap: spacing.sm, marginBottom: spacing.sm },
   header: {
-    backgroundColor: '#667eea',
-    padding: 30,
-    paddingTop: 60,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 5,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: 'rgba(255,255,255,0.9)',
-  },
-  stats: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    padding: 20,
-    marginTop: -30,
-  },
-  statCard: {
-    backgroundColor: 'white',
-    padding: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    flex: 1,
-    marginHorizontal: 5,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statValue: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 5,
-  },
-  primaryButton: {
-    backgroundColor: '#667eea',
-    margin: 20,
-    marginBottom: 10,
-    padding: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  primaryButtonText: {
-    color: 'white',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  secondaryButton: {
-    backgroundColor: 'white',
-    margin: 20,
-    marginTop: 0,
-    padding: 20,
-    borderRadius: 10,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#667eea',
-  },
-  secondaryButtonText: {
-    color: '#667eea',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  changeRoleButton: {
-    marginHorizontal: 20,
-    marginTop: -8,
-    marginBottom: 20,
-    alignItems: 'center',
-    paddingVertical: 10,
-  },
-  changeRoleButtonText: {
-    color: '#667eea',
-    fontWeight: '700',
-    fontSize: 14,
-  },
-  managerPanel: {
-    backgroundColor: 'white',
-    marginHorizontal: 20,
-    borderRadius: 10,
-    padding: 14,
-    marginBottom: 10,
-  },
-  managerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#333',
-    marginBottom: 10,
-  },
-  managerEmpty: {
-    color: '#777',
-  },
-  managerRow: {
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    marginBottom: spacing.lg,
   },
-  managerRowLeft: {
-    flex: 1,
-    marginRight: 8,
-  },
-  managerVehicle: {
-    color: '#222',
-    fontWeight: '600',
-  },
-  managerMeta: {
-    color: '#666',
-    fontSize: 12,
-    marginTop: 2,
-    textTransform: 'capitalize',
-  },
-  managerChevron: {
-    color: '#667eea',
-    fontWeight: '700',
-    fontSize: 18,
-  },
-  inviteButton: {
-    marginTop: 12,
-    backgroundColor: '#eef2ff',
+  headerText: { flex: 1, marginRight: spacing.md },
+  dealership: { ...type.footnote, fontWeight: '600' },
+  title: { ...type.largeTitle, fontSize: 30 },
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.card,
     borderWidth: 1,
-    borderColor: '#c7d2fe',
-    borderRadius: 8,
-    paddingVertical: 12,
+    borderColor: colors.border,
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  inviteButtonText: {
-    color: '#4338ca',
-    fontWeight: '700',
-  },
-  managerActions: {
-    marginTop: 12,
+  avatarText: { fontSize: 16, fontWeight: '700', color: colors.textSecondary },
+  cta: {
     flexDirection: 'row',
-    gap: 8,
-  },
-  managerActionButton: {
-    flex: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
     alignItems: 'center',
+    gap: spacing.lg,
+    backgroundColor: colors.accent,
+    borderRadius: radius.lg,
+    paddingHorizontal: spacing.xl,
+    minHeight: 84,
+    ...shadow.card,
   },
-  managerActionGhost: {
-    backgroundColor: '#eef2ff',
-    borderWidth: 1,
-    borderColor: '#c7d2fe',
+  ctaTitle: { color: colors.onAccent, fontSize: 20, fontWeight: '700' },
+  ctaSub: { color: colors.onAccentMuted, fontSize: 15, marginTop: 2 },
+  today: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    minHeight: 48,
+    paddingHorizontal: spacing.xs,
   },
-  managerActionDanger: {
-    backgroundColor: '#ef4444',
-  },
-  managerActionText: {
-    color: '#fff',
-    fontWeight: '700',
-    fontSize: 13,
-  },
-  managerActionGhostText: {
-    color: '#4338ca',
-  },
+  todayText: { ...type.subhead, flex: 1 },
+  historyLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  historyText: { color: colors.accent, fontSize: 16, fontWeight: '600' },
 });

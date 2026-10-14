@@ -50,3 +50,10 @@ expo-*.log
 # generated native folders
 /ios
 /android
+
+# Local dev binaries (cloudflared tunnel)
+tools/
+
+# Web export (deployed by .github/workflows/deploy-pages.yml)
+dist-web/
+_site/

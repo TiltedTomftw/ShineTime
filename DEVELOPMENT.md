@@ -4,11 +4,15 @@
 
 Cloud-backed via **Supabase**. No local server, tunnel, or LAN setup.
 
-- The Expo app reads/writes Supabase directly (`src/lib/supabase.js`).
-- Jobs are cached in AsyncStorage and synced in the background (`src/services/storage.js`).
+- **Supabase is the source of truth for jobs.** Screens read from it; the phone
+  keeps no job list of its own.
+- The phone keeps only an **outbox** of actions that haven't been confirmed yet
+  ("paused #P4521 at 10:42") plus not-yet-uploaded photo files. Each entry is
+  deleted the moment Supabase confirms it, and sign-out clears it.
 - Tenant isolation (per dealership) is enforced by Postgres **Row-Level Security**,
   not by client code — the anon key is public, so RLS is the real boundary.
-- OCR and any other privileged work run in **Edge Functions**, never in the app.
+- OCR, employee sign-in and other privileged work run in **Edge Functions**,
+  never in the app.
 
 ## Quick Start
 
@@ -17,87 +21,81 @@ Cloud-backed via **Supabase**. No local server, tunnel, or LAN setup.
    ```env
    EXPO_PUBLIC_SUPABASE_URL=https://YOUR-ref.supabase.co
    EXPO_PUBLIC_SUPABASE_ANON_KEY=YOUR_ANON_KEY
+   # optional: where the manager "Open the web dashboard" button points
+   EXPO_PUBLIC_DASHBOARD_URL=https://tiltedtomftw.github.io/shinetime-dashboard/
    ```
 3. `npm install && npm start`, then scan the QR code.
 
 For a fresh Supabase project: apply `supabase/migrations/*.sql`, deploy the
-functions in `supabase/functions/`, set the `GEMINI_API_KEY` secret, and create a
-dealership + membership.
+functions in `supabase/functions/` (set `GEMINI_API_KEY` and
+`EMPLOYEE_PIN_PEPPER`), then `node scripts/create-dealership.js`.
 
 ## File Structure
 
 ```
-App.js                          # Auth-gated entry (session → dealership → role → PIN)
+App.js                          # Gate: session → account → dealership → app
 src/
-├── lib/supabase.js             # Supabase client (AsyncStorage-backed session)
+├── lib/supabase.js             # Supabase client (+ AppState token refresh)
 ├── context/AuthContext.js      # Session, profile, memberships, active dealership/role
 ├── services/
-│   ├── storage.js              # Jobs CRUD + Supabase sync + pending-write queue
-│   ├── ocr.js                  # Calls the ocr-vehicle Edge Function
-│   └── timeMath.js             # Pure duration helpers (unit-tested)
-├── navigation/AppNavigator.js  # Home / NewJob / InProgress / History / JobDetail
-└── screens/                    # incl. onboarding drafts (CreateDealership, JoinByCode,
-                                # ManageInviteCodes) — not yet wired into AppNavigator
+│   ├── jobLogic.js             # PURE: applyJobAction reducer, row mapping, timers (CJS, tested)
+│   ├── timeMath.js             # PURE: durations + time formatting (CJS, tested)
+│   ├── outboxCore.js           # PURE: the outbox rules (CJS, tested)
+│   ├── outbox.js               # Outbox wiring: AsyncStorage, NetInfo, AppState, retries
+│   ├── jobSync.js              # Sends one outbox entry to Supabase
+│   ├── jobs.js                 # Reads + actions for screens; photo prep; legacy cleanup
+│   ├── session.js              # In-memory "who/where" for the services
+│   └── ocr.js                  # Calls the ocr-vehicle Edge Function
+├── components/                 # ui.js (Button, Card, Field, StatusPill…), JobCard,
+│                               # OutboxBanner, Sheet, PhotoViewer, AuthLayout
+├── navigation/AppNavigator.js  # Home / NewJob / JobDetail / History / Account
+└── screens/
 supabase/
-├── migrations/                 # 001 foundation, 002 storage, 003 hardening (draft),
-│                               # 004 onboarding (draft)
-└── functions/ocr-vehicle, manager-dashboard
-__tests__/                      # node --test suites
+├── migrations/
+└── functions/ocr-vehicle, employee-access, manager-dashboard (legacy)
+dashboard/index.html            # Manager web dashboard (GitHub Pages)
+__tests__/                      # node --test (pure) + jest (components) + integration
 ```
 
 ## Data Flow
 
 - **Auth**: `AuthContext` restores the session, ensures a `profiles` row, loads
-  `dealership_memberships`, and drives the entry gate in `App.js`.
-- **Jobs**: created locally first (`createJob`), then synced. All local
-  read-modify-writes go through a mutex (`mutateLocalJobs`) so concurrent actions
-  and background syncs can't clobber each other. Failed writes queue in
-  `@detailtracker_pending_jobs` and replay on the next sync.
-- **Photos**: uploaded to the private `job-photos` bucket; the DB row is written
-  first, then a short-lived signed URL is minted at read time.
-- **OCR**: `scanVehicleFromImage` → `supabase.functions.invoke('ocr-vehicle')`.
-
-## Key Functions (`src/services/storage.js`)
-
-```javascript
-await createJob({ stockNumber, make, model, year, color })
-await getActiveJobs()      // syncs, returns in_progress
-await pauseJob(jobId, note)
-await resumeJob(jobId)
-await completeJob(jobId)
-await addJobNote(jobId, text)
-await addJobPhoto(jobId, { base64, mimeType, note })
-await getAllJobs()         // full history (syncs first)
-await getOverallStats()
-```
-
-Duration math lives in `src/services/timeMath.js` (clamps negatives to guard
-against device clock skew) and is unit-tested — run `npm test`.
-
-## Backend Notes
-
-- Migrations `003` (server-side PIN identity + RLS tightening) and `004`
-  (self-serve onboarding: invite codes + RPCs) are **drafted but not applied**.
-  See `docs/PHASE1_HARDENING_NOTES.md` and `docs/PHASE2_ONBOARDING_NOTES.md`.
-- The current detailer-PIN flow (`AuthContext.completeDealershipUserAccess`) is
-  per-device only; migration `003` moves it server-side. Wiring is a follow-up.
+  `dealership_memberships`, and drives the gate in `App.js`. If loading fails
+  (no signal) the gate shows a Retry screen rather than guessing.
+- **Employees** sign in through the `employee-access` function with a code,
+  their name and a PIN. "I'm new here" confirms a new name before creating an
+  account; "I've signed in before" accepts any code from their dealership,
+  even an expired one.
+- **Actions** (`create`, `pause`, `resume`, `complete`, `note`, `photo`) are
+  built by `jobs.js`, applied locally with `applyJobAction` for an instant UI,
+  written to the outbox, and sent straight away. `jobSync.js` re-reads the job,
+  applies the same action to the server copy and saves with an
+  optimistic-concurrency check on `client_updated_at`. Action ids make retries
+  idempotent; action timestamps are when the detailer tapped.
+- **Reads**: `fetchOpenJobs`, `fetchJob`, `fetchHistory` (paged),
+  `fetchTodayStats` — always the signed-in person's own jobs. The app has no
+  manager mode; manager tools are only on the web dashboard. Unsent outbox actions are overlaid so a detailer always sees
+  their latest taps. A small in-memory cache (never written to disk) keeps
+  screens usable if the signal drops mid-shift.
+- **Photos**: resized to 1600px, kept in app storage until uploaded to the
+  private `job-photos` bucket, recorded in `job_photos`, and read back with one
+  batched `createSignedUrls` call. Payloads store only `storagePath`.
+- **Rework**: a manager reopening a job adds a pause starting at the original
+  completion time, so the wait before rework isn't billed. `needs_rework` is an
+  open status everywhere.
 
 ## Testing
 
-- `npm test` — unit tests (currently time-math).
-- Device smoke test: sign in → start → pause → resume → note → photo → complete,
-  then repeat offline and reconnect to verify sync/merge.
+- `npm test` — pure unit tests (reducer, outbox rules, time math).
+- `npm run test:components` — jest render tests for the main screens.
+- `node --test __tests__/integration/dashboard.integration.js` — dashboard in
+  jsdom with a fake Supabase (no network).
+- `npm run test:integration` — live Supabase project (throwaway data).
 
 ## Common Issues
 
 - **"Supabase env vars missing"** — no `.env`; add it and `npx expo start -c`.
-- **Empty data after sign-in** — account has no active membership, or RLS
-  migrations aren't applied.
-- **Timer/UI stale** — screens reload on focus (`useFocusEffect`); pull data via
-  the `storage.js` getters, which sync first.
-
-## Getting Help
-
-- Expo: https://docs.expo.dev
-- React Navigation: https://reactnavigation.org
-- Supabase: https://supabase.com/docs
+- **"Can't reach Shinetime"** on launch — the account couldn't be loaded; check
+  the network. Unsent work stays in the outbox until it sends.
+- **Empty data after sign-in** — the account has no active membership (No Access
+  screen), or RLS migrations aren't applied.

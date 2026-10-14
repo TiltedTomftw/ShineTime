@@ -14,12 +14,25 @@ module.exports = [
       '.expo/**',
       'dist/**',
       'web-build/**',
+      'dist-web/**',
+      '_site/**',
       'supabase/functions/**',
     ],
   },
 
   ...expoConfig,
   eslintConfigPrettier,
+
+  // React Native component tests: ESM + JSX, run by jest (not node --test).
+  {
+    files: ['**/__tests__/components/**/*.spec.js'],
+    languageOptions: {
+      sourceType: 'module',
+      globals: { ...globals.jest, ...globals.node },
+    },
+    // jest.mock() must precede the import it mocks (jest hoists it anyway).
+    rules: { 'import/first': 'off' },
+  },
 
   // eslint-config-expo 57 ships the React Compiler rule set as errors. This app
   // does not use the React Compiler, and the flagged code is hand-written and
@@ -35,11 +48,13 @@ module.exports = [
   // CommonJS files: allow require/module/__dirname and Node globals.
   {
     files: [
-      '**/__tests__/**/*.js',
+      '**/__tests__/*.js',
+      '**/__tests__/integration/**/*.js',
       '**/*.test.js',
       'scripts/**/*.js',
       'src/services/timeMath.js',
       'src/services/jobLogic.js',
+      'src/services/outboxCore.js',
       'eslint.config.js',
       'prettier.config.js',
     ],

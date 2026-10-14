@@ -1,881 +1,655 @@
 import React from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  Alert,
   ActivityIndicator,
-  Modal,
-  TextInput,
   Image,
+  KeyboardAvoidingView,
   Platform,
-  FlatList,
-  Dimensions,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
-import {
-  getJobById,
-  pauseJob,
-  resumeJob,
-  completeJob,
-  addJobNote,
-  addJobPhoto,
-} from '../services/storage';
-import { vehicleDescription } from '../components/VehicleSummary';
-import { computeLiveElapsed } from '../services/jobLogic';
-import { formatDuration } from '../services/timeMath';
 import { useFocusEffect } from '@react-navigation/native';
-import { useAuth } from '../context/AuthContext';
+import { useHeaderHeight } from '@react-navigation/elements';
+import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
+import { Ionicons } from '@expo/vector-icons';
+import { alertMessage } from '../components/alerts';
+import { Button, Card, EmptyState, Notice, SectionLabel, StatusPill } from '../components/ui';
+import Sheet from '../components/Sheet';
+import PhotoViewer from '../components/PhotoViewer';
+import { vehicleDescription, vehicleTitle } from '../components/VehicleSummary';
+import { fetchJob, performJobAction, addJobPhoto } from '../services/jobs';
+import { outbox } from '../services/outbox';
+import { computeLiveElapsed, ensureArray, PAUSE_REASONS } from '../services/jobLogic';
+import { formatClock, formatDuration, formatWhen } from '../services/timeMath';
+import { colors, radius, spacing, type } from '../theme';
+
+const CUSTODY_LABEL = {
+  start: 'Started',
+  pause: 'Paused',
+  resume: 'Resumed',
+  complete: 'Completed',
+  rework: 'Sent back for rework',
+  rework_start: 'Started rework',
+  handoff: 'Reassigned',
+};
+
+const OTHER_REASON = 'Other';
+// Reasons where it helps to note who took the car (optional).
+const WHO_TOOK_IT = {
+  'Taken by sales': "Salesperson's name",
+  'Taken by a tech': "Tech's name",
+};
+
+const haptic = () => {
+  if (Platform.OS !== 'web')
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+};
 
 export default function JobDetailScreen({ route, navigation }) {
-  const { activeOperationalRole } = useAuth();
-  const isManager = (activeOperationalRole || '').toLowerCase() === 'manager';
   const { jobId } = route.params;
+  const headerHeight = useHeaderHeight();
   const [job, setJob] = React.useState(null);
-  const [loading, setLoading] = React.useState(false);
-  const [showCompleteModal, setShowCompleteModal] = React.useState(false);
-  const [noteText, setNoteText] = React.useState('');
-  const [photoLoading, setPhotoLoading] = React.useState(false);
-  const [showPauseNoteModal, setShowPauseNoteModal] = React.useState(false);
-  const [pauseNoteText, setPauseNoteText] = React.useState('');
-  const [showPhotoModal, setShowPhotoModal] = React.useState(false);
-  const [activePhotoIndex, setActivePhotoIndex] = React.useState(0);
+  const [photos, setPhotos] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [offline, setOffline] = React.useState(false);
+  const [loadError, setLoadError] = React.useState('');
   const [now, setNow] = React.useState(() => Date.now());
+  // Separate busy flags so saving a note never hides Pause / Complete.
+  const [busyAction, setBusyAction] = React.useState(null);
+  const [noteText, setNoteText] = React.useState('');
+  const [noteBusy, setNoteBusy] = React.useState(false);
+  const [photoBusy, setPhotoBusy] = React.useState(false);
+  const [pauseOpen, setPauseOpen] = React.useState(false);
+  const [pauseReason, setPauseReason] = React.useState('');
+  const [pauseNote, setPauseNote] = React.useState('');
+  const [completeOpen, setCompleteOpen] = React.useState(false);
+  const [viewerIndex, setViewerIndex] = React.useState(null);
 
-  const photoUrls = (job?.photos || []).map((photo) => photo.url);
-
-  const loadJob = async () => {
-    const jobData = await getJobById(jobId);
-    setJob(jobData);
-  };
+  const load = React.useCallback(async () => {
+    try {
+      const result = await fetchJob(jobId);
+      setJob(result.job);
+      setPhotos(result.photos);
+      setOffline(result.offline);
+      setLoadError('');
+    } catch (e) {
+      setLoadError(e?.message || 'Could not load this job.');
+    } finally {
+      setLoaded(true);
+    }
+  }, [jobId]);
 
   useFocusEffect(
     React.useCallback(() => {
-      loadJob();
-    }, [jobId]),
+      load();
+    }, [load]),
   );
 
-  // Live-tick the elapsed timer once per second while the job is running, so
-  // the displayed time actually advances instead of freezing until re-render.
+  // When something for this job finishes sending, refresh from Supabase so
+  // "Waiting to send" clears and uploaded photos get their real links.
+  const pendingRef = React.useRef(null);
+  React.useEffect(
+    () =>
+      outbox.subscribe(() => {
+        const count = outbox.pendingFor(jobId).length;
+        if (pendingRef.current !== null && count < pendingRef.current) load();
+        pendingRef.current = count;
+      }),
+    [jobId, load],
+  );
+
+  React.useEffect(() => {
+    if (job) navigation.setOptions({ title: vehicleTitle(job) });
+  }, [job?.stockNumber, navigation]); // eslint-disable-line react-hooks/exhaustive-deps
+
   React.useEffect(() => {
     if (job?.status !== 'in_progress') return undefined;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [job?.status]);
 
-  const handlePause = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot pause jobs in this view.');
-      return;
-    }
-    if (Platform.OS === 'ios') {
-      Alert.prompt(
-        'Pause Job',
-        'Add a note (optional)',
-        async (text) => {
-          setLoading(true);
-          try {
-            await pauseJob(jobId, text || '');
-            await loadJob();
-            Alert.alert('Success', 'Job paused');
-          } catch (error) {
-            Alert.alert('Error', error.message);
-          }
-          setLoading(false);
-        },
-        'plain-text',
-      );
-    } else {
-      setPauseNoteText('');
-      setShowPauseNoteModal(true);
+  const act = async (type, data) => {
+    setBusyAction(type);
+    try {
+      const updated = await performJobAction(job, type, data);
+      setJob(updated);
+      haptic();
+      return updated;
+    } catch (e) {
+      alertMessage("That didn't work", e?.message || 'Try again.');
+      return null;
+    } finally {
+      setBusyAction(null);
     }
   };
 
-  const handlePauseWithNote = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot pause jobs in this view.');
-      return;
-    }
-    setLoading(true);
-    try {
-      await pauseJob(jobId, pauseNoteText || '');
-      await loadJob();
-      setShowPauseNoteModal(false);
-      Alert.alert('Success', 'Job paused');
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    }
-    setLoading(false);
-  };
-
-  const handleResume = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot resume jobs in this view.');
-      return;
-    }
-    setLoading(true);
-    try {
-      await resumeJob(jobId);
-      await loadJob();
-      Alert.alert('Success', 'Job resumed');
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    }
-    setLoading(false);
-  };
-
-  const handleComplete = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot complete jobs in this view.');
-      return;
-    }
-    console.log('Complete button clicked');
-    setLoading(true);
-    try {
-      console.log('Calling completeJob with jobId:', jobId);
-      await completeJob(jobId);
-      console.log('Job completed successfully, navigating back');
-      setShowCompleteModal(false);
-      navigation.goBack();
-    } catch (error) {
-      console.error('Error completing job:', error);
-      Alert.alert('Error', error.message);
-      setLoading(false);
-      setShowCompleteModal(false);
+  const confirmPause = async () => {
+    // "Other": the typed text IS the reason ("Paused: test drive").
+    // "Taken by…": the optional name rides along ("Taken by sales — Mike").
+    const typed = pauseNote.trim();
+    const data =
+      pauseReason === OTHER_REASON
+        ? { reason: typed }
+        : WHO_TOOK_IT[pauseReason] && typed
+          ? { reason: pauseReason, note: typed }
+          : { reason: pauseReason };
+    const updated = await act('pause', data);
+    if (updated) {
+      setPauseOpen(false);
+      setPauseReason('');
+      setPauseNote('');
     }
   };
 
-  const handleAddNote = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot add notes in this view.');
-      return;
+  const confirmComplete = async () => {
+    const updated = await act('complete');
+    if (updated) {
+      setCompleteOpen(false);
+      navigation.navigate('Home', {
+        justCompleted: { stock: updated.stockNumber || '', durationMs: updated.totalActiveTime },
+      });
     }
-    if (!noteText.trim()) {
-      Alert.alert('Note Required', 'Please enter a note.');
-      return;
-    }
-    setLoading(true);
+  };
+
+  const addNote = async () => {
+    const text = noteText.trim();
+    if (!text) return;
+    setNoteBusy(true);
     try {
-      await addJobNote(jobId, noteText);
+      setJob(await performJobAction(job, 'note', { text }));
       setNoteText('');
-      await loadJob();
-    } catch (error) {
-      Alert.alert('Error', error.message);
+    } catch (e) {
+      alertMessage("Couldn't add the note", e?.message || 'Try again.');
+    } finally {
+      setNoteBusy(false);
     }
-    setLoading(false);
   };
 
-  const handleAddPhoto = async () => {
-    if (isManager) {
-      Alert.alert('Read Only', 'Managers cannot add photos in this view.');
-      return;
-    }
+  const takePhoto = async () => {
     try {
       const permission = await ImagePicker.requestCameraPermissionsAsync();
       if (!permission.granted) {
-        Alert.alert('Camera Required', 'Please allow camera access to add photos.');
+        alertMessage('Camera is off', 'Allow camera access in Settings to add photos.');
         return;
       }
-
-      setPhotoLoading(true);
-      const result = await ImagePicker.launchCameraAsync({
-        quality: 0.7,
-        base64: true,
-      });
-
-      if (result.canceled) {
-        setPhotoLoading(false);
-        return;
-      }
-
-      const asset = result.assets && result.assets[0];
-      if (!asset || !asset.base64) {
-        setPhotoLoading(false);
-        Alert.alert('Photo Failed', 'No image data found.');
-        return;
-      }
-
-      const response = await addJobPhoto(jobId, {
-        base64: asset.base64,
-        mimeType: asset.mimeType || 'image/jpeg',
-      });
-
-      if (response.warning) {
-        Alert.alert('Storage Warning', response.warning);
-      }
-
-      await loadJob();
-    } catch (error) {
-      Alert.alert('Photo Failed', error.message);
+      const result = await ImagePicker.launchCameraAsync({ quality: 0.8 });
+      if (result.canceled || !result.assets?.[0]) return;
+      setPhotoBusy(true);
+      await addJobPhoto(job, result.assets[0]);
+      await load(); // shows it right away with an "uploading" badge
+      haptic();
+    } catch (e) {
+      alertMessage("Couldn't save the photo", e?.message || 'Try again.');
+    } finally {
+      setPhotoBusy(false);
     }
-    setPhotoLoading(false);
   };
 
-  const handleOpenPhoto = (photoUrl, index) => {
-    setActivePhotoIndex(index);
-    setShowPhotoModal(true);
-  };
-
-  if (!job) {
+  if (!loaded) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#667eea" />
+      <View style={styles.center}>
+        <ActivityIndicator size="large" color={colors.accent} />
       </View>
     );
   }
 
-  const elapsedTime = computeLiveElapsed(job, now);
-  const isPaused = job.status === 'paused';
-  const isCompleted = job.status === 'completed';
+  if (!job) {
+    return (
+      <View style={styles.center}>
+        <EmptyState
+          icon={offline ? 'cloud-offline-outline' : 'alert-circle-outline'}
+          title={offline ? "Can't load this job offline" : 'This job is no longer available'}
+          body={
+            loadError ||
+            (offline ? 'Try again when you have signal.' : 'It may have been removed by a manager.')
+          }
+        >
+          <Button
+            title={offline ? 'Try again' : 'Back to my cars'}
+            onPress={offline ? load : () => navigation.goBack()}
+          />
+        </EmptyState>
+      </View>
+    );
+  }
+
+  const status = job.status;
+  const elapsed = status === 'completed' ? job.totalActiveTime : computeLiveElapsed(job, now);
+  const reworkNote = ensureArray(job.custodyEvents)
+    .filter((e) => e.type === 'rework')
+    .pop();
+  const lastPause = ensureArray(job.pauseEvents)
+    .filter((e) => e.type === 'pause')
+    .pop();
+  const timeline = [...ensureArray(job.custodyEvents)].sort((a, b) => b.timestamp - a.timestamp);
+  const perDetailer = Object.entries(job.detailerTimeTracking || {});
+  const description = vehicleDescription(job);
 
   return (
-    <ScrollView style={styles.container} keyboardShouldPersistTaps="handled">
-      <View style={styles.section}>
-        <View style={styles.statusHeader}>
-          <View
-            style={[
-              styles.statusBadge,
-              isCompleted
-                ? styles.statusCompleted
-                : isPaused
-                  ? styles.statusPaused
-                  : styles.statusInProgress,
-            ]}
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={headerHeight}
+    >
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        {offline ? (
+          <Notice tone="warning">Offline. Changes are saved on this phone until they send.</Notice>
+        ) : null}
+
+        {/* Hero: the timer is what a detailer looks at. */}
+        <Card style={styles.hero}>
+          <StatusPill status={status} />
+          <Text
+            style={[styles.timer, { color: status === 'in_progress' ? colors.run : colors.text }]}
+            accessibilityLabel={`Time worked ${formatDuration(elapsed)}`}
+            accessibilityLiveRegion="none"
           >
-            <Text style={styles.statusText}>
-              {isCompleted ? '✓ Completed' : isPaused ? '⏸ Paused' : '⏱ In Progress'}
-            </Text>
-          </View>
-        </View>
-
-        {/* Vehicle Info — Stock #, then Year Make Model · Color, then VIN (optional) */}
-        {job.stockNumber ? <Text style={styles.vehicleText}>Stock #{job.stockNumber}</Text> : null}
-        {!!vehicleDescription(job) && (
-          <Text style={styles.infoText}>{vehicleDescription(job)}</Text>
-        )}
-        {job.vin ? (
-          <Text style={[styles.infoText, { color: '#999', fontSize: 13, marginTop: 2 }]}>
-            VIN · {job.vin}
+            {formatClock(elapsed)}
           </Text>
-        ) : null}
-
-        {/* Job Info */}
-        <View style={styles.divider} />
-        <Text style={styles.infoText}>
-          Detailer{job.detailers && job.detailers.length > 1 ? 's' : ''}:{' '}
-          <Text style={styles.boldText}>
-            {job.detailers && job.detailers.length > 1
-              ? job.detailers.join(' → ')
-              : job.detailerName || 'Unknown'}
+          {description ? <Text style={styles.vehicle}>{description}</Text> : null}
+          {job.vin ? <Text style={styles.vin}>VIN {job.vin}</Text> : null}
+          <Text style={styles.meta}>
+            {job.detailerName}
+            {` · started ${formatWhen(job.startTime, now)}`}
           </Text>
-        </Text>
-        <Text style={styles.infoText}>Started: {new Date(job.startTime).toLocaleString()}</Text>
-        {isCompleted && job.endTime ? (
-          <Text style={styles.infoText}>Completed: {new Date(job.endTime).toLocaleString()}</Text>
-        ) : null}
-
-        {/* Time Tracking */}
-        <View style={styles.divider} />
-        {isCompleted ? (
-          <Text style={styles.timeText}>Total Time: {formatDuration(job.totalActiveTime)}</Text>
-        ) : (
-          <Text style={styles.timeText}>Elapsed: {formatDuration(elapsedTime)}</Text>
-        )}
-        {job.totalPauseTime > 0 && (
-          <Text style={styles.infoText}>Pause Time: {formatDuration(job.totalPauseTime)}</Text>
-        )}
-
-        {job.detailerTimeTracking && Object.keys(job.detailerTimeTracking).length > 1 && (
-          <View style={styles.detailerTimeBreakdown}>
-            <Text style={styles.smallLabel}>Time per Detailer:</Text>
-            {Object.entries(job.detailerTimeTracking).map(([detailer, time]) => (
-              <Text key={detailer} style={styles.detailerTimeText}>
-                • {detailer}: {formatDuration(time)}
+          {job.pendingCount > 0 ? (
+            <View style={styles.pending}>
+              <Ionicons name="cloud-upload-outline" size={16} color={colors.pause} />
+              <Text style={styles.pendingText}>
+                {offline ? 'Saved on this phone · will send when online' : 'Sending…'}
               </Text>
-            ))}
+            </View>
+          ) : null}
+        </Card>
+
+        {status === 'paused' && lastPause ? (
+          <Notice tone="warning">
+            {`Paused ${formatWhen(lastPause.timestamp, now)}${
+              lastPause.label || lastPause.reason ? ` · ${lastPause.label || lastPause.reason}` : ''
+            }`}
+          </Notice>
+        ) : null}
+        {status === 'needs_rework' ? (
+          <Notice tone="error">
+            {reworkNote?.note
+              ? `Sent back: “${reworkNote.note}” — ${reworkNote.detailerName || 'Manager'}`
+              : 'A manager sent this car back for rework.'}
+          </Notice>
+        ) : null}
+        {status === 'completed' ? (
+          <Notice tone="success">
+            {`Completed ${formatWhen(job.endTime, now)} · ${formatDuration(job.totalActiveTime)} worked`}
+          </Notice>
+        ) : null}
+
+        {status !== 'completed' ? (
+          <View style={styles.actions}>
+            {status === 'in_progress' ? (
+              <Button
+                title="Pause"
+                icon="pause"
+                variant="pause"
+                size="lg"
+                onPress={() => setPauseOpen(true)}
+                disabled={!!busyAction}
+                style={styles.flex}
+              />
+            ) : (
+              <Button
+                title={status === 'needs_rework' ? 'Start rework' : 'Resume'}
+                icon="play"
+                variant="run"
+                size="lg"
+                onPress={() => act('resume')}
+                loading={busyAction === 'resume'}
+                disabled={!!busyAction && busyAction !== 'resume'}
+                style={styles.flex}
+              />
+            )}
+            {status !== 'needs_rework' ? (
+              <Button
+                title="Complete"
+                icon="checkmark"
+                size="lg"
+                onPress={() => setCompleteOpen(true)}
+                disabled={!!busyAction}
+                style={styles.flexWide}
+              />
+            ) : null}
           </View>
-        )}
-      </View>
+        ) : null}
 
-      {!isCompleted && !isManager && (
-        <View style={styles.actions}>
-          {loading ? (
-            <ActivityIndicator size="large" color="#667eea" />
-          ) : (
-            <>
-              {isPaused ? (
-                <TouchableOpacity style={styles.resumeButton} onPress={handleResume}>
-                  <Text style={styles.buttonText}>▶ Resume</Text>
-                </TouchableOpacity>
+        <SectionLabel>{`Photos · ${photos.length}`}</SectionLabel>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.photos}
+        >
+          {status !== 'completed' ? (
+            <Pressable
+              onPress={takePhoto}
+              disabled={photoBusy}
+              accessibilityRole="button"
+              accessibilityLabel="Take a photo"
+              style={({ pressed }) => [styles.addPhoto, pressed && { opacity: 0.7 }]}
+            >
+              {photoBusy ? (
+                <ActivityIndicator color={colors.accent} />
               ) : (
-                <TouchableOpacity style={styles.pauseButton} onPress={handlePause}>
-                  <Text style={styles.buttonText}>⏸ Pause</Text>
-                </TouchableOpacity>
+                <>
+                  <Ionicons name="camera" size={26} color={colors.accent} />
+                  <Text style={styles.addPhotoText}>Add</Text>
+                </>
               )}
+            </Pressable>
+          ) : null}
+          {photos.map((p, i) => (
+            <Pressable
+              key={p.key}
+              onPress={() => setViewerIndex(i)}
+              accessibilityRole="imagebutton"
+              accessibilityLabel={`Photo ${i + 1}${p.pending ? ', uploading' : ''}`}
+            >
+              <Image source={{ uri: p.url }} style={styles.thumb} />
+              {p.pending ? (
+                <View style={styles.thumbBadge}>
+                  <Ionicons name="cloud-upload" size={13} color={colors.white} />
+                </View>
+              ) : null}
+            </Pressable>
+          ))}
+          {photos.length === 0 && status === 'completed' ? (
+            <Text style={styles.empty}>No photos.</Text>
+          ) : null}
+        </ScrollView>
 
-              <TouchableOpacity
-                style={styles.completeButton}
-                onPress={() => setShowCompleteModal(true)}
-              >
-                <Text style={styles.buttonText}>✓ Complete Job</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
-      )}
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Notes</Text>
-        {!isCompleted && !isManager && (
-          <View style={styles.noteInputRow}>
+        <SectionLabel>Notes</SectionLabel>
+        {status !== 'completed' ? (
+          <View style={styles.noteBox}>
             <TextInput
               style={styles.noteInput}
               value={noteText}
               onChangeText={setNoteText}
-              placeholder="Add a note"
-              multiline={false}
-              maxLength={500}
-              returnKeyType="done"
-              onSubmitEditing={handleAddNote}
-              blurOnSubmit
-            />
-            <TouchableOpacity style={styles.noteButton} onPress={handleAddNote} disabled={loading}>
-              <Text style={styles.noteButtonText}>Add</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-        {job.notes && job.notes.length > 0 ? (
-          job.notes.map((note, index) => (
-            <View key={`${note.timestamp}-${index}`} style={styles.noteItem}>
-              <Text style={styles.noteMeta}>
-                {formatTimestamp(note.timestamp)} · {note.detailerName || 'Unknown'}
-              </Text>
-              <Text style={styles.noteText}>{note.text}</Text>
-            </View>
-          ))
-        ) : (
-          <Text style={styles.emptyText}>No notes yet.</Text>
-        )}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Photos</Text>
-        {!isCompleted && !isManager && (
-          <TouchableOpacity
-            style={styles.photoButton}
-            onPress={handleAddPhoto}
-            disabled={photoLoading}
-          >
-            {photoLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text style={styles.photoButtonText}>Add Photo</Text>
-            )}
-          </TouchableOpacity>
-        )}
-        {job.photos && job.photos.length > 0 ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow}>
-            {job.photos.map((photo, index) => {
-              const thumbUrl = photo.thumbUrl || photo.url;
-              return (
-                <TouchableOpacity
-                  key={`${photo.timestamp}-${index}`}
-                  onPress={() => handleOpenPhoto(photo.url, index)}
-                >
-                  <Image source={{ uri: thumbUrl }} style={styles.photoThumb} />
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        ) : (
-          <Text style={styles.emptyText}>No photos yet.</Text>
-        )}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Chain of Custody</Text>
-        {job.custodyEvents && job.custodyEvents.length > 0 ? (
-          [...job.custodyEvents]
-            .sort((a, b) => b.timestamp - a.timestamp)
-            .map((event, index) => (
-              <View key={`${event.timestamp}-${index}`} style={styles.custodyItem}>
-                <Text style={styles.custodyMeta}>
-                  {formatTimestamp(event.timestamp)} · {event.detailerName || 'Unknown'}
-                </Text>
-                <Text style={styles.custodyText}>Action: {formatCustodyAction(event.type)}</Text>
-                {event.type !== 'resume' &&
-                event.type !== 'start' &&
-                event.type !== 'complete' &&
-                event.note ? (
-                  <Text style={styles.custodyNote}>Note: {event.note}</Text>
-                ) : null}
-              </View>
-            ))
-        ) : (
-          <Text style={styles.emptyText}>No custody history yet.</Text>
-        )}
-      </View>
-
-      <Modal
-        visible={showCompleteModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowCompleteModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Complete Job?</Text>
-            <Text style={styles.modalText}>Mark this job as completed?</Text>
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalButtonCancel}
-                onPress={() => setShowCompleteModal(false)}
-                disabled={loading}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.modalButtonConfirm}
-                onPress={handleComplete}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.modalButtonTextConfirm}>Complete</Text>
-                )}
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showPauseNoteModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowPauseNoteModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Pause Job</Text>
-            <Text style={styles.modalText}>Add a note (optional)</Text>
-            <TextInput
-              style={styles.noteInput}
-              value={pauseNoteText}
-              onChangeText={setPauseNoteText}
-              placeholder="Pause note"
+              placeholder="Add a note (damage, stains, odor…)"
+              placeholderTextColor={colors.placeholder}
               multiline
               maxLength={500}
+              accessibilityLabel="Note"
             />
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={styles.modalButtonCancel}
-                onPress={() => setShowPauseNoteModal(false)}
-                disabled={loading}
-              >
-                <Text style={styles.modalButtonTextCancel}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.modalButtonConfirm}
-                onPress={handlePauseWithNote}
-                disabled={loading}
-              >
-                {loading ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.modalButtonTextConfirm}>Pause</Text>
-                )}
-              </TouchableOpacity>
-            </View>
+            <Button
+              title="Add note"
+              size="sm"
+              variant="quiet"
+              onPress={addNote}
+              loading={noteBusy}
+              disabled={!noteText.trim()}
+              style={styles.noteButton}
+            />
           </View>
-        </View>
-      </Modal>
-
-      <Modal
-        visible={showPhotoModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => setShowPhotoModal(false)}
-      >
-        <View style={styles.photoModalOverlay}>
-          <TouchableOpacity style={styles.photoModalClose} onPress={() => setShowPhotoModal(false)}>
-            <Text style={styles.photoModalCloseText}>×</Text>
-          </TouchableOpacity>
-          <FlatList
-            data={photoUrls}
-            horizontal
-            pagingEnabled
-            initialScrollIndex={activePhotoIndex}
-            showsHorizontalScrollIndicator={false}
-            style={styles.photoModalList}
-            decelerationRate="fast"
-            getItemLayout={(_, index) => ({
-              length: Dimensions.get('window').width,
-              offset: Dimensions.get('window').width * index,
-              index,
-            })}
-            keyExtractor={(item, index) => `${item}-${index}`}
-            onMomentumScrollEnd={(event) => {
-              const width = Dimensions.get('window').width;
-              const index = Math.round(event.nativeEvent.contentOffset.x / width);
-              setActivePhotoIndex(index);
-            }}
-            renderItem={({ item }) => (
-              <View style={styles.photoModalPage}>
-                <Image source={{ uri: item }} style={styles.photoModalImage} resizeMode="contain" />
+        ) : null}
+        {ensureArray(job.notes).length === 0 ? (
+          <Text style={styles.empty}>No notes yet.</Text>
+        ) : (
+          <Card style={styles.list}>
+            {job.notes.map((note, index) => (
+              <View
+                key={`${note.timestamp}-${index}`}
+                style={[styles.listItem, index > 0 && styles.listDivider]}
+              >
+                <Text style={styles.listMeta}>
+                  {formatWhen(note.timestamp, now)} · {note.detailerName || 'Unknown'}
+                </Text>
+                <Text style={styles.listText}>{note.text}</Text>
               </View>
-            )}
-          />
+            ))}
+          </Card>
+        )}
+
+        {perDetailer.length > 1 ? (
+          <>
+            <SectionLabel>Time by detailer</SectionLabel>
+            <Card style={styles.list}>
+              {perDetailer.map(([name, ms], index) => (
+                <View key={name} style={[styles.listRow, index > 0 && styles.listDivider]}>
+                  <Text style={styles.listText}>{name}</Text>
+                  <Text style={styles.listText}>{formatDuration(ms)}</Text>
+                </View>
+              ))}
+            </Card>
+          </>
+        ) : null}
+
+        <SectionLabel>History</SectionLabel>
+        <Card style={styles.list}>
+          {timeline.map((event, index) => (
+            <View
+              key={`${event.timestamp}-${index}`}
+              style={[styles.listItem, index > 0 && styles.listDivider]}
+            >
+              <Text style={styles.listText}>
+                {CUSTODY_LABEL[event.type] || event.type}
+                <Text style={styles.listMeta}>{`  ${event.detailerName || 'Unknown'}`}</Text>
+              </Text>
+              <Text style={styles.listMeta}>
+                {formatWhen(event.timestamp, now)}
+                {event.note && event.type !== 'pause' ? ` · ${event.note}` : ''}
+              </Text>
+            </View>
+          ))}
+        </Card>
+      </ScrollView>
+
+      <Sheet visible={pauseOpen} title="Why are you pausing?" onClose={() => setPauseOpen(false)}>
+        <View style={styles.chips}>
+          {[...PAUSE_REASONS, OTHER_REASON].map((reason) => {
+            const on = pauseReason === reason;
+            return (
+              <Pressable
+                key={reason}
+                onPress={() => {
+                  setPauseReason(on ? '' : reason);
+                  setPauseNote('');
+                }}
+                accessibilityRole="radio"
+                accessibilityState={{ selected: on }}
+                style={[styles.chip, on && styles.chipOn]}
+              >
+                <Text style={[styles.chipText, on && styles.chipTextOn]}>{reason}</Text>
+              </Pressable>
+            );
+          })}
         </View>
-      </Modal>
-    </ScrollView>
+        {pauseReason === OTHER_REASON ? (
+          <TextInput
+            style={styles.sheetInput}
+            value={pauseNote}
+            onChangeText={setPauseNote}
+            placeholder="What's the reason?"
+            placeholderTextColor={colors.placeholder}
+            maxLength={60}
+            autoFocus
+            accessibilityLabel="Other reason"
+          />
+        ) : WHO_TOOK_IT[pauseReason] ? (
+          <TextInput
+            style={styles.sheetInput}
+            value={pauseNote}
+            onChangeText={setPauseNote}
+            placeholder={`${WHO_TOOK_IT[pauseReason]} (optional)`}
+            placeholderTextColor={colors.placeholder}
+            maxLength={40}
+            autoCapitalize="words"
+            accessibilityLabel={WHO_TOOK_IT[pauseReason]}
+          />
+        ) : null}
+        <Button
+          title="Pause job"
+          icon="pause"
+          variant="pause"
+          size="lg"
+          onPress={confirmPause}
+          loading={busyAction === 'pause'}
+        />
+      </Sheet>
+
+      <Sheet
+        visible={completeOpen}
+        title={`Finish ${vehicleTitle(job)}?`}
+        onClose={() => setCompleteOpen(false)}
+      >
+        <View style={styles.summary}>
+          <SummaryItem label="Time worked" value={formatDuration(elapsed)} />
+          <SummaryItem label="Photos" value={String(photos.length)} />
+          <SummaryItem label="Notes" value={String(ensureArray(job.notes).length)} />
+        </View>
+        {photos.length === 0 ? (
+          <Notice
+            tone="warning"
+            action="Add photo"
+            onAction={() => {
+              setCompleteOpen(false);
+              takePhoto();
+            }}
+          >
+            No photos yet. Most managers want an after photo.
+          </Notice>
+        ) : null}
+        <Text style={styles.sheetHint}>
+          Completed jobs are locked. A manager can reopen it if needed.
+        </Text>
+        <Button
+          title="Complete job"
+          icon="checkmark"
+          size="lg"
+          onPress={confirmComplete}
+          loading={busyAction === 'complete'}
+        />
+        <Button title="Not yet" variant="ghost" onPress={() => setCompleteOpen(false)} />
+      </Sheet>
+
+      <PhotoViewer
+        key={viewerIndex ?? 'closed'}
+        photos={photos}
+        index={viewerIndex}
+        onClose={() => setViewerIndex(null)}
+      />
+    </KeyboardAvoidingView>
   );
 }
 
-function formatTimestamp(timestamp) {
-  if (!timestamp) return '--';
-  return new Date(timestamp).toLocaleString();
-}
-
-function formatCustodyAction(type) {
-  switch (type) {
-    case 'start':
-      return 'Started';
-    case 'pause':
-      return 'Paused';
-    case 'resume':
-      return 'Resumed';
-    case 'complete':
-      return 'Completed';
-    default:
-      return type || 'Unknown';
-  }
+function SummaryItem({ label, value }) {
+  return (
+    <View style={styles.summaryItem}>
+      <Text style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  flex: { flex: 1 },
+  flexWide: { flex: 1.4 },
+  center: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  loadingContainer: {
-    flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.bg,
+    padding: spacing.xl,
+  },
+  container: { flex: 1, backgroundColor: colors.bg },
+  content: { padding: spacing.lg, paddingBottom: spacing.xxl * 2, gap: spacing.sm },
+  hero: { alignItems: 'center', gap: spacing.xs, paddingVertical: spacing.xl },
+  timer: { ...type.timer, marginTop: spacing.sm },
+  vehicle: { ...type.headline, textAlign: 'center' },
+  vin: { ...type.footnote },
+  meta: { ...type.footnote, marginTop: spacing.xs },
+  pending: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: spacing.sm },
+  pendingText: { ...type.footnote, color: colors.pause, fontWeight: '600' },
+  actions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.xs },
+  photos: { gap: spacing.sm, paddingVertical: spacing.xs },
+  addPhoto: {
+    width: 84,
+    height: 84,
+    borderRadius: radius.md,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.accent,
+    backgroundColor: colors.card,
     alignItems: 'center',
-    backgroundColor: '#f5f5f5',
-  },
-  section: {
-    backgroundColor: '#fff',
-    margin: 15,
-    padding: 20,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 12,
-  },
-  statusHeader: {
-    alignItems: 'center',
-    marginBottom: 15,
-  },
-  statusBadge: {
-    paddingHorizontal: 20,
-    paddingVertical: 10,
-    borderRadius: 20,
-  },
-  statusInProgress: {
-    backgroundColor: '#667eea',
-  },
-  statusPaused: {
-    backgroundColor: '#f59e0b',
-  },
-  statusCompleted: {
-    backgroundColor: '#10b981',
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  vehicleText: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#667eea',
-    marginBottom: 5,
-  },
-  infoText: {
-    fontSize: 16,
-    color: '#666',
-    marginTop: 6,
-  },
-  boldText: {
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: '#e5e7eb',
-    marginVertical: 12,
-  },
-  timeText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#667eea',
-    marginBottom: 5,
-  },
-  smallLabel: {
-    fontSize: 14,
-    color: '#666',
-    fontWeight: '600',
-    marginTop: 8,
-    marginBottom: 4,
-  },
-  actions: {
-    padding: 15,
-    gap: 15,
-  },
-  pauseButton: {
-    backgroundColor: '#f59e0b',
-    padding: 18,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  resumeButton: {
-    backgroundColor: '#10b981',
-    padding: 18,
-    borderRadius: 10,
-    alignItems: 'center',
-  },
-  completeButton: {
-    backgroundColor: '#667eea',
-    padding: 18,
-    borderRadius: 10,
-    alignItems: 'center',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  detailerTimeBreakdown: {
-    marginTop: 10,
-    paddingTop: 10,
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-  },
-  detailerTimeText: {
-    fontSize: 14,
-    color: '#6b7280',
-    marginLeft: 10,
-    marginTop: 5,
-  },
-  noteInputRow: {
-    marginBottom: 12,
-  },
-  noteInput: {
-    backgroundColor: '#f8f9fa',
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    minHeight: 60,
-    textAlignVertical: 'top',
-    marginBottom: 10,
-  },
-  noteButton: {
-    backgroundColor: '#667eea',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  noteButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  noteItem: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 10,
-    marginTop: 10,
-  },
-  noteMeta: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  noteText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  custodyItem: {
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingTop: 10,
-    marginTop: 10,
-  },
-  custodyMeta: {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 4,
-  },
-  custodyText: {
-    fontSize: 14,
-    color: '#111827',
-  },
-  custodyNote: {
-    fontSize: 13,
-    color: '#374151',
-    marginTop: 2,
-  },
-  emptyText: {
-    fontSize: 14,
-    color: '#9ca3af',
-  },
-  photoButton: {
-    backgroundColor: '#667eea',
-    paddingVertical: 10,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 12,
-    shadowColor: '#667eea',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
-    elevation: 3,
-  },
-  photoButtonText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  photoRow: {
-    flexDirection: 'row',
-  },
-  photoThumb: {
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    marginRight: 10,
-    backgroundColor: '#e5e7eb',
-  },
-  photoModalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  photoModalImage: {
-    width: '100%',
-    height: '100%',
-  },
-  photoModalList: {
-    width: '100%',
-    height: '100%',
-  },
-  photoModalPage: {
-    width: Dimensions.get('window').width,
-    height: Dimensions.get('window').height,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  photoModalClose: {
+  addPhotoText: { color: colors.accent, fontWeight: '600', marginTop: 2 },
+  thumb: { width: 84, height: 84, borderRadius: radius.md, backgroundColor: colors.separator },
+  thumbBadge: {
     position: 'absolute',
-    top: 40,
-    right: 20,
-    zIndex: 2,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    right: 4,
+    bottom: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: colors.pause,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  photoModalCloseText: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: 'bold',
-    lineHeight: 24,
+  empty: { ...type.subhead, paddingHorizontal: spacing.xs },
+  noteBox: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.sm,
+    gap: spacing.sm,
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  noteInput: { ...type.callout, minHeight: 64, textAlignVertical: 'top', padding: spacing.xs },
+  noteButton: { alignSelf: 'flex-end', paddingHorizontal: spacing.xl },
+  list: { paddingVertical: spacing.xs },
+  listItem: { paddingVertical: spacing.md, gap: 2 },
+  listRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: spacing.md },
+  listDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.separator },
+  listMeta: { ...type.footnote },
+  listText: { ...type.callout },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+  chip: {
+    minHeight: 44,
+    paddingHorizontal: spacing.lg,
+    borderRadius: radius.pill,
+    borderWidth: 1.5,
+    borderColor: colors.border,
     justifyContent: 'center',
-    alignItems: 'center',
   },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 15,
-    padding: 25,
-    width: '85%',
-    maxWidth: 400,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 5,
+  chipOn: { borderColor: colors.pause, backgroundColor: colors.pauseSoft },
+  chipText: { fontSize: 15, fontWeight: '600', color: colors.text },
+  chipTextOn: { color: colors.pause },
+  sheetInput: {
+    ...type.callout,
+    minHeight: 48,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
   },
-  modalTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 10,
-    textAlign: 'center',
-  },
-  modalText: {
-    fontSize: 16,
-    color: '#666',
-    marginBottom: 25,
-    textAlign: 'center',
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  modalButtonCancel: {
+  sheetHint: { ...type.footnote },
+  summary: { flexDirection: 'row', gap: spacing.sm },
+  summaryItem: {
     flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.bg,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
     alignItems: 'center',
   },
-  modalButtonConfirm: {
-    flex: 1,
-    padding: 15,
-    borderRadius: 8,
-    backgroundColor: '#667eea',
-    alignItems: 'center',
+  summaryValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+    fontVariant: ['tabular-nums'],
   },
-  modalButtonTextCancel: {
-    color: '#666',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  modalButtonTextConfirm: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
-  },
+  summaryLabel: { ...type.footnote, marginTop: 2 },
 });
